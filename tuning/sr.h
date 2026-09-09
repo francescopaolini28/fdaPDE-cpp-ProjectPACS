@@ -85,6 +85,11 @@ class SRPDE {
         using edf_cache_t = std::unordered_map<
           std::array<double, StaticInputSize>, double, internals::std_array_hash<double, StaticInputSize>>;
 
+        enum class Criterion {
+            GCV,
+            AIC
+        };
+        
         gcv_t() noexcept = default;
         gcv_t(SRPDE* model, const edf_cache_t& edf_cache) :
             model_(model),
@@ -111,18 +116,30 @@ class SRPDE {
             if (edf_cache_.find(lambda_vec) == edf_cache_.end()) {   // cache Tr[S]
                 edf_cache_[lambda_vec] = model_->edf(r_, seed_);
             }
+
+            double rss = (model_->fitted() - model_->response()).squaredNorm();
             double dor = n_ - (q_ + edf_cache_.at(lambda_vec));   // residual degrees of freedom
-            return (n_ / std::pow(dor, 2)) * (model_->fitted() - model_->response()).squaredNorm();
+            if (criterion_ == Criterion::AIC) {
+                return n_*std::log(rss / n_) + 2*(q_ + edf_cache_.at(lambda_vec));
+            } else {
+                return (n_ / std::pow(dor, 2)) * rss;
+            }
+
         }
-        // observers
+        // observers & setters
         const edf_cache_t& edf_cache() const { return edf_cache_; }
         edf_cache_t& edf_cache() { return edf_cache_; }
+        Criterion criterion() const { return criterion_;}
+        void set_criterion (Criterion c) {criterion_ = c;}
+
        private:
         SRPDE* model_;
         int n_ = 0, q_ = 0;
         edf_cache_t edf_cache_;
         // stochastic edf approximation parameter
         int r_, seed_;
+        // Default criterion is GCV
+        Criterion criterion_ = Criterion::GCV;
     };
     gcv_t gcv() { return gcv_t(this); }
     gcv_t gcv(const typename gcv_t::edf_cache_t& edf_cache) { return gcv_t(this, edf_cache); }
