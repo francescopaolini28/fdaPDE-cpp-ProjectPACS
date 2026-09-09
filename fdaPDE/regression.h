@@ -24,10 +24,10 @@
 
 #include "src/indexes.h"
 #include "solvers.h"
-#include "src/models/sr.h"
+//#include "src/models/sr.h"
 #include "src/models/gsr.h"
 #include "src/models/qsr.h"
-#include "tuning/sr.h"
+#include "./tuning/sr.h"
 
 // clang-format on
 
