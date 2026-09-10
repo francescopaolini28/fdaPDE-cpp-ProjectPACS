@@ -87,7 +87,8 @@ class SRPDE {
 
         enum class Criterion {
             GCV,
-            AIC
+            AIC,
+            IMPROVED_AIC
         };
         
         gcv_t() noexcept = default;
@@ -119,11 +120,17 @@ class SRPDE {
 
             double rss = (model_->fitted() - model_->response()).squaredNorm();
             double dor = n_ - (q_ + edf_cache_.at(lambda_vec));   // residual degrees of freedom
-            if (criterion_ == Criterion::AIC) {
-                return n_*std::log(rss / n_) + 2*(q_ + edf_cache_.at(lambda_vec));
-            } else {
-                return (n_ / std::pow(dor, 2)) * rss;
+            switch (criterion_) {
+                case Criterion::GCV:
+                    return (n_ / std::pow(dor, 2)) * rss;
+                case Criterion::AIC:
+                    return n_*std::log(rss / n_) + 2*(n_ - dor);
+                case Criterion::IMPROVED_AIC:
+                    return std::log(rss/n_) + 1 + 2*(1 + (n_ - dor)) / (dor - 2);
+                default:
+                    throw std::invalid_argument("Unknown criterion");
             }
+            
 
         }
         // observers & setters
