@@ -63,6 +63,7 @@ class SRPDE {
     int n_covs() const { return n_covs_; }
     int n_obs() const { return n_obs_; }
     double edf(int r = 100, int seed = random_seed) { return solver_.edf(r, seed); }
+    double edf_StS(int r = 100, int seed = random_seed) { return solver_.edf_StS(r, seed); }
     const vector_t& response() const { return solver_.response(); }
     const matrix_t& design_matrix() const { return solver_.design_matrix(); }
     const sparse_matrix_t& weights() const { return solver_.weights(); }
@@ -87,10 +88,13 @@ class SRPDE {
 
         enum class Criterion {
             GCV,
+            RCV,
             AIC,
             GFAIC,
             IMPROVED_AIC,
-            CP
+            CP,
+            PSE,
+            RISK_EST
         };
         
         gcv_t() noexcept = default;
@@ -100,11 +104,35 @@ class SRPDE {
             q_(model->n_covs()),
             edf_cache_(edf_cache),
             r_(100),
-            seed_(random_seed) { }
+            seed_(random_seed) { }     
         gcv_t(SRPDE* model, const edf_cache_t& edf_cache, int r, int seed) :
-            model_(model), n_(model->n_obs()), q_(model->n_covs()), edf_cache_(edf_cache), r_(r), seed_(seed) { }
-        gcv_t(SRPDE* model) : gcv_t(model, edf_cache_t()) { }
-        gcv_t(SRPDE* model, int r, int seed) : gcv_t(model, edf_cache_t(), r, seed) { }
+            model_(model), 
+            n_(model->n_obs()), 
+            q_(model->n_covs()), 
+            edf_cache_(edf_cache), 
+            r_(r), 
+            seed_(seed) { }
+        // gcv_t(SRPDE* model) : gcv_t(model, edf_cache_t()) { }
+        // gcv_t(SRPDE* model, int r, int seed) : gcv_t(model, edf_cache_t(), r, seed) { }
+        gcv_t(SRPDE* model, const edf_cache_t& edf_cache, const edf_cache_t& edf_StS_cache) :
+            model_(model),
+            n_(model->n_obs()),
+            q_(model->n_covs()),
+            edf_cache_(edf_cache),
+            edf_StS_cache_(edf_StS_cache), 
+            r_(100),
+            seed_(random_seed) { }
+        gcv_t(SRPDE* model, const edf_cache_t& edf_cache, const edf_cache_t& edf_StS_cache, int r, int seed) :
+            model_(model), 
+            n_(model->n_obs()), 
+            q_(model->n_covs()), 
+            edf_cache_(edf_cache), 
+            edf_StS_cache_(edf_StS_cache), 
+            r_(r), 
+            seed_(seed) { }
+        gcv_t(SRPDE* model) : gcv_t(model, edf_cache_t(), edf_cache_t()) { }
+        gcv_t(SRPDE* model, int r, int seed) : gcv_t(model, edf_cache_t(), edf_cache_t(), r, seed) { }
+
 
         template <typename InputType_>
             requires(internals::is_subscriptable<InputType_, int>)
@@ -120,12 +148,23 @@ class SRPDE {
                 edf_cache_[lambda_vec] = model_->edf(r_, seed_);
             }
 
+            if (criterion_ == Criterion::PSE || criterion_ == Criterion::RISK_EST) {
+                if (edf_StS_cache_.find(lambda_vec) == edf_StS_cache_.end()) {
+                    edf_StS_cache_[lambda_vec] = model_->edf_StS(r_, seed_);
+                }
+            }
+            
+
             double rss = (model_->fitted() - model_->response()).squaredNorm();
-            double dor = n_ - (q_ + edf_cache_.at(lambda_vec));   // residual degrees of freedom, trace of (I - Slambda)
+            double dor = n_ - (q_ + edf_cache_.at(lambda_vec));   // residual degrees of freedom, trace of (I - S)
+            
             switch (criterion_) {
 
                 case Criterion::GCV:
                     return (n_ / std::pow(dor, 2)) * rss;
+
+                case Criterion::RCV:
+                    return (1.0/n_ * rss * (1.0 + 1.0/n_ + std::pow(n_ - dor, 2)) / std::pow((1.0 + 1.0/n_ + (n_ - dor)), 2));
 
                 case Criterion::AIC:
                     return n_*std::log(rss / n_) + 2.0*(n_ - dor);
@@ -137,8 +176,18 @@ class SRPDE {
                     return std::log(rss/n_) + 1.0 + 2.0*(1.0 + (n_ - dor)) / (dor - 2.0);
 
                 case Criterion::CP:
-                    // da vedere
+
                     return (1.0 / n_) * (rss + 2.0 * (rss/dor) * (n_ - dor) - (rss/dor));
+
+                // da fare, manca la stima di sigma^2
+
+                case Criterion::RISK_EST:
+
+                    double trStS = edf_StS_cache_.at(lambda_vec);
+
+                return -1
+
+
 
                 default:
                     throw std::invalid_argument("Unknown criterion");
@@ -149,6 +198,8 @@ class SRPDE {
         // observers & setters
         const edf_cache_t& edf_cache() const { return edf_cache_; }
         edf_cache_t& edf_cache() { return edf_cache_; }
+        const edf_cache_t& edf_StS_cache() const { return edf_StS_cache_; }
+        edf_cache_t& edf_StS_cache() { return edf_StS_cache_; }
         Criterion criterion() const { return criterion_;}
         void set_criterion (Criterion c) {criterion_ = c;}
 
@@ -156,6 +207,7 @@ class SRPDE {
         SRPDE* model_;
         int n_ = 0, q_ = 0;
         edf_cache_t edf_cache_;
+        edf_cache_t edf_StS_cache_;
         // stochastic edf approximation parameter
         int r_, seed_;
         // Default criterion is GCV
@@ -163,8 +215,10 @@ class SRPDE {
     };
     gcv_t gcv() { return gcv_t(this); }
     gcv_t gcv(const typename gcv_t::edf_cache_t& edf_cache) { return gcv_t(this, edf_cache); }
+    gcv_t gcv(const typename gcv_t::edf_cache_t& edf_cache, const typename gcv_t::edf_cache_t& edf_StS_cache) { return gcv_t(this, edf_cache, edf_StS_cache); }
     gcv_t gcv(int r, int seed) { return gcv_t(this, r, seed); }
     gcv_t gcv(const typename gcv_t::edf_cache_t& edf_cache, int r, int seed) { return gcv_t(this, edf_cache, r, seed); }
+    gcv_t gcv(const typename gcv_t::edf_cache_t& edf_cache, const typename gcv_t::edf_cache_t& edf_StS_cache, int r, int seed) { return gcv_t(this, edf_cache, edf_StS_cache, r, seed); }
 
     // inference
     class wald_t {

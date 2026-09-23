@@ -47,6 +47,7 @@ int main() {
         return data;
     };
     Triangulation<2, 2> data_grid = Triangulation<2, 2>::UnitSquare(40);
+    // regular grid
     matrix_t y_clean = generate_data(data_grid.nodes());
     write_csv("y_clean.csv", y_clean);
 
