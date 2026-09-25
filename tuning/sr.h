@@ -76,8 +76,8 @@ class SRPDE {
     }
 
     // Generalized Cross Validation index
-    struct gcv_t : public ScalarFieldBase<n_lambda, gcv_t> {
-        using Base = ScalarFieldBase<1, gcv_t>;
+    struct computeLambda : public ScalarFieldBase<n_lambda, computeLambda> {
+        using Base = ScalarFieldBase<1, computeLambda>;
         static constexpr int StaticInputSize = n_lambda;
         static constexpr int NestAsRef = 0;
         static constexpr int XprBits = 0;
@@ -86,52 +86,91 @@ class SRPDE {
         using edf_cache_t = std::unordered_map<
           std::array<double, StaticInputSize>, double, internals::std_array_hash<double, StaticInputSize>>;
 
-        enum class Criterion {
-            GCV,
-            RCV,
-            AIC,
-            GFAIC,
-            IMPROVED_AIC,
-            CP,
-            PSE,
-            RISK_EST
+        //Struct containing the data passed to a criterion
+        struct criterion_data {
+            double n, q, rss, edf, dor, edf_SS;
         };
+
+        //Function pointer type
+        using criterion_function = double (*)(const criterion_data& data);
         
-        gcv_t() noexcept = default;
-        gcv_t(SRPDE* model, const edf_cache_t& edf_cache) :
+        static double gcv_criterion(const criterion_data& d) {
+            return (d.n / std::pow(d.dor, 2)) * d.rss;
+        }
+
+        static double rcv_criterion(const criterion_data& d) {
+            return (1.0 / d.n) * d.rss * (1.0 + 1.0 / d.n + std::pow(d.n - d.dor, 2)) / std::pow(1.0 + 1.0 /d.n + (d.n - d.dor), 2);
+        }
+
+        static double aic_criterion(const criterion_data& d) {
+            return d.n * std::log(d.rss / d.n) + 2.0 * (d.n - d.dor);
+        }
+
+        static double gfaic_criterion(const criterion_data& d) {
+            return (d.rss / d.n) + std::exp(2.0 * (d.n - d.dor)) / d.n;
+        }
+
+        static double improved_aic_criterion(const criterion_data& d) {
+            return std::log(d.rss / d.n) + 1.0 + 2.0 * (1.0 + (d.n - d.dor)) / (d.dor - 2.0);
+        }
+
+
+        //Constructors
+        computeLambda() noexcept = default;
+
+        computeLambda(SRPDE* model, criterion_function criterion) :
+            model_(model),
+            n_(model->n_obs()),
+            q_(model->n_covs()),
+            r_(100),
+            seed_(random_seed),
+            criterion_function_(criterion)  { }
+
+        computeLambda(SRPDE* model, const edf_cache_t& edf_cache, criterion_function criterion) :
             model_(model),
             n_(model->n_obs()),
             q_(model->n_covs()),
             edf_cache_(edf_cache),
             r_(100),
-            seed_(random_seed) { }     
-        gcv_t(SRPDE* model, const edf_cache_t& edf_cache, int r, int seed) :
+            seed_(random_seed),
+            criterion_function_(criterion) { }     
+        computeLambda(SRPDE* model, const edf_cache_t& edf_cache, int r, int seed, criterion_function criterion) :
             model_(model), 
             n_(model->n_obs()), 
             q_(model->n_covs()), 
             edf_cache_(edf_cache), 
             r_(r), 
-            seed_(seed) { }
+            seed_(seed),
+            criterion_function_(criterion){ }
         // gcv_t(SRPDE* model) : gcv_t(model, edf_cache_t()) { }
         // gcv_t(SRPDE* model, int r, int seed) : gcv_t(model, edf_cache_t(), r, seed) { }
-        gcv_t(SRPDE* model, const edf_cache_t& edf_cache, const edf_cache_t& edf_StS_cache) :
+        computeLambda(SRPDE* model, const edf_cache_t& edf_cache, const edf_cache_t& edf_SS_cache, criterion_function criterion) :
             model_(model),
             n_(model->n_obs()),
             q_(model->n_covs()),
             edf_cache_(edf_cache),
-            edf_StS_cache_(edf_StS_cache), 
+            edf_SS_cache_(edf_SS_cache), 
             r_(100),
-            seed_(random_seed) { }
-        gcv_t(SRPDE* model, const edf_cache_t& edf_cache, const edf_cache_t& edf_StS_cache, int r, int seed) :
+            seed_(random_seed),
+            criterion_function_(criterion) { }
+
+        computeLambda(SRPDE* model, const edf_cache_t& edf_cache, const edf_cache_t& edf_SS_cache, int r, int seed, criterion_function criterion) :
             model_(model), 
             n_(model->n_obs()), 
             q_(model->n_covs()), 
             edf_cache_(edf_cache), 
-            edf_StS_cache_(edf_StS_cache), 
+            edf_SS_cache_(edf_SS_cache), 
             r_(r), 
-            seed_(seed) { }
-        gcv_t(SRPDE* model) : gcv_t(model, edf_cache_t(), edf_cache_t()) { }
-        gcv_t(SRPDE* model, int r, int seed) : gcv_t(model, edf_cache_t(), edf_cache_t(), r, seed) { }
+            seed_(seed), 
+            criterion_function_(criterion){ }
+
+        computeLambda(SRPDE* model, int r, int seed, criterion_function criterion) :
+            model_(model),
+            n_(model->n_obs()), 
+            q_(model->n_covs()), 
+            r_(r), 
+            seed_(seed),
+            criterion_function_(criterion) { }
 
 
         template <typename InputType_>
@@ -148,78 +187,66 @@ class SRPDE {
                 edf_cache_[lambda_vec] = model_->edf(r_, seed_);
             }
 
-            if (criterion_ == Criterion::PSE || criterion_ == Criterion::RISK_EST) {
-                if (edf_StS_cache_.find(lambda_vec) == edf_StS_cache_.end()) {
-                    edf_StS_cache_[lambda_vec] = model_->edf_StS(r_, seed_);
-                }
-            }
             
-
             double rss = (model_->fitted() - model_->response()).squaredNorm();
-            double dor = n_ - (q_ + edf_cache_.at(lambda_vec));   // residual degrees of freedom, trace of (I - S)
+            double edf = edf_cache_.at(lambda_vec);
+            double dor = n_ - (q_ + edf);   // residual degrees of freedom, trace of (I - S)
+            criterion_data data{
+                static_cast<double>(n_), //integer to double
+                static_cast<double>(q_), //integer to double
+                rss,
+                edf,
+                dor,
+                0.0
+            };
             
-            switch (criterion_) {
-
-                case Criterion::GCV:
-                    return (n_ / std::pow(dor, 2)) * rss;
-
-                case Criterion::RCV:
-                    return (1.0/n_ * rss * (1.0 + 1.0/n_ + std::pow(n_ - dor, 2)) / std::pow((1.0 + 1.0/n_ + (n_ - dor)), 2));
-
-                case Criterion::AIC:
-                    return n_*std::log(rss / n_) + 2.0*(n_ - dor);
-
-                case Criterion::GFAIC:
-                    return (rss/n_) + std::exp((2.0 * (n_ - dor)) / n_);
-
-                case Criterion::IMPROVED_AIC:
-                    return std::log(rss/n_) + 1.0 + 2.0*(1.0 + (n_ - dor)) / (dor - 2.0);
-
-                case Criterion::CP:
-
-                    return (1.0 / n_) * (rss + 2.0 * (rss/dor) * (n_ - dor) - (rss/dor));
-
-                // da fare, manca la stima di sigma^2
-
-                case Criterion::RISK_EST:
-
-                    double trStS = edf_StS_cache_.at(lambda_vec);
-
-                return -1
-
-
-
-                default:
-                    throw std::invalid_argument("Unknown criterion");
-            }
-            
+            //fdapde_assert(criterion_function_ != nullptr);
+            return criterion_function_(data);
 
         }
         // observers & setters
         const edf_cache_t& edf_cache() const { return edf_cache_; }
         edf_cache_t& edf_cache() { return edf_cache_; }
-        const edf_cache_t& edf_StS_cache() const { return edf_StS_cache_; }
-        edf_cache_t& edf_StS_cache() { return edf_StS_cache_; }
-        Criterion criterion() const { return criterion_;}
-        void set_criterion (Criterion c) {criterion_ = c;}
-
+        const edf_cache_t& edf_SS_cache() const { return edf_SS_cache_; }
+        edf_cache_t& edf_SS_cache() { return edf_SS_cache_; }
+     
        private:
         SRPDE* model_;
         int n_ = 0, q_ = 0;
         edf_cache_t edf_cache_;
-        edf_cache_t edf_StS_cache_;
+        edf_cache_t edf_SS_cache_;
         // stochastic edf approximation parameter
         int r_, seed_;
-        // Default criterion is GCV
-        Criterion criterion_ = Criterion::GCV;
+        criterion_function criterion_function_ = &gcv_criterion;
     };
-    gcv_t gcv() { return gcv_t(this); }
-    gcv_t gcv(const typename gcv_t::edf_cache_t& edf_cache) { return gcv_t(this, edf_cache); }
-    gcv_t gcv(const typename gcv_t::edf_cache_t& edf_cache, const typename gcv_t::edf_cache_t& edf_StS_cache) { return gcv_t(this, edf_cache, edf_StS_cache); }
-    gcv_t gcv(int r, int seed) { return gcv_t(this, r, seed); }
-    gcv_t gcv(const typename gcv_t::edf_cache_t& edf_cache, int r, int seed) { return gcv_t(this, edf_cache, r, seed); }
-    gcv_t gcv(const typename gcv_t::edf_cache_t& edf_cache, const typename gcv_t::edf_cache_t& edf_StS_cache, int r, int seed) { return gcv_t(this, edf_cache, edf_StS_cache, r, seed); }
+    //gcv
+    computeLambda gcv() { return computeLambda(this, &computeLambda::gcv_criterion); }
+    computeLambda gcv(const typename computeLambda::edf_cache_t& edf_cache) { return computeLambda(this, edf_cache, &computeLambda::gcv_criterion); }
+    computeLambda gcv(int r, int seed) { return computeLambda(this, r, seed, &computeLambda::gcv_criterion); }
+    computeLambda gcv(const typename computeLambda::edf_cache_t& edf_cache, int r, int seed) { return computeLambda(this, edf_cache, r, seed, &computeLambda::gcv_criterion); }
+    //rcv
+    computeLambda rcv() { return computeLambda(this, &computeLambda::rcv_criterion); }
+    computeLambda rcv(const typename computeLambda::edf_cache_t& edf_cache) { return computeLambda(this, edf_cache, &computeLambda::rcv_criterion); }
+    computeLambda rcv(int r, int seed) { return computeLambda(this, r, seed, &computeLambda::rcv_criterion); }
+    computeLambda rcv(const typename computeLambda::edf_cache_t& edf_cache, int r, int seed) { return computeLambda(this, edf_cache, r, seed, &computeLambda::rcv_criterion); }
 
+    computeLambda aic() { return computeLambda(this, &computeLambda::aic_criterion); }
+    computeLambda aic(const typename computeLambda::edf_cache_t& edf_cache) { return computeLambda(this, edf_cache, &computeLambda::aic_criterion); }
+    computeLambda aic(int r, int seed) { return computeLambda(this, r, seed, &computeLambda::aic_criterion); }
+    computeLambda aic(const typename computeLambda::edf_cache_t& edf_cache, int r, int seed) { return computeLambda(this, edf_cache, r, seed, &computeLambda::aic_criterion); }
+
+    computeLambda improved_aic() { return computeLambda(this, &computeLambda::improved_aic_criterion); }
+    computeLambda improved_aic(const typename computeLambda::edf_cache_t& edf_cache) { return computeLambda(this, edf_cache, &computeLambda::improved_aic_criterion); }
+    computeLambda improved_aic(int r, int seed) { return computeLambda(this, r, seed, &computeLambda::improved_aic_criterion); }
+    computeLambda improved_aic(const typename computeLambda::edf_cache_t& edf_cache, int r, int seed) { return computeLambda(this, edf_cache, r, seed, &computeLambda::improved_aic_criterion); }
+/*
+    computeLambda gcv() { return computeLambda(this, &computeLambda::gcv_criterion); }
+    computeLambda gcv(const typename computeLambda::edf_cache_t& edf_cache) { return computeLambda(this, edf_cache, &computeLambda::gcv_criterion); }
+    computeLambda gcv(const typename computeLambda::edf_cache_t& edf_cache, const typename computeLambda::edf_cache_t& edf_SS_cache) { return computeLambda(this, edf_cache, edf_SS_cache, &computeLambda::gcv_criterion); }
+    computeLambda gcv(int r, int seed) { return computeLambda(this, r, seed, &computeLambda::gcv_criterion); }
+    computeLambda gcv(const typename computeLambda::edf_cache_t& edf_cache, int r, int seed) { return computeLambda(this, edf_cache, r, seed, &computeLambda::gcv_criterion); }
+    computeLambda gcv(const typename computeLambda::edf_cache_t& edf_cache, const typename computeLambda::edf_cache_t& edf_SS_cache, int r, int seed) { return computeLambda(this, edf_cache, edf_SS_cache, r, seed, &computeLambda::gcv_criterion); }
+*/
     // inference
     class wald_t {
         using matrix_t = Eigen::Matrix<double, Dynamic, Dynamic>;
