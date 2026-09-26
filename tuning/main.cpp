@@ -82,7 +82,7 @@ int main() {
     SRPDE model("y ~ f", data, fe_ls_elliptic(a, F));
 
     // ------------------------ calibration
-    auto gcv = model.gcv(100, seed);   // index to optimize
+    auto gcv = model.gfaic(100, seed);   // index to optimize
     GridSearch<1> optimizer;                  // optimizer
 
     std::vector<double> lambda_grid(13);
@@ -91,6 +91,7 @@ int main() {
 
     // final fit with optimal smoothing parameter
     model.fit(optimizer.optimum());
+
 
     // ------------------------ postprocess
     std::vector<double> gcv_values, gcv_optimum;    

@@ -482,6 +482,51 @@ struct fe_ls_elliptic {
     };
 
 
+    // Stochastic approximation of tr[S] using Hutch++
+    double edf_S_hutchpp(int r = 100, int seed = random_seed) {
+
+        fdapde_assert(lambda_saved_.has_value());
+        int seed_ = (seed == random_seed) ? std::random_device()() : seed;
+        std::mt19937 rng(seed_);
+        rademacher_distribution rademacher;
+
+        // Defining m as the closest multiple of 3 smaller than r
+        int m = (r / 3) * 3; 
+        int p = m / 3;
+
+        //H, G creation and population with rademacher (H corresponds to matrix S in the Hutch++ paper)
+        matrix_t H(n_locs_, p);
+        matrix_t G(n_locs_, p);
+        for (int i = 0; i < n_locs_; ++i) {
+            for (int j = 0; j < p; ++j) { 
+                H(i, j) = rademacher(rng);
+                G(i, j) = rademacher(rng);
+            }
+        }
+        
+        // SH
+        matrix_t SH = apply_S(H);
+        
+        Eigen::ColPivHouseholderQR<matrix_t> qr(SH);
+        matrix_t Q = qr.householderQ() * matrix_t::Identity(n_locs_, p); //I retain only the first p (m/3) columns of Q
+
+        // SQ
+        matrix_t SQ = apply_S(Q);
+        
+        // Tr(Q'SQ) element-wise(Hadamard) product
+        double tr_QSQ = (Q.cwiseProduct(SQ)).sum();
+
+        // (I - QQ')G
+        matrix_t G_p = G - Q * (Q.transpose() * G);
+        matrix_t SG_p = apply_S(G_p);
+        
+        // Tr(G_p'SG_p)
+        double tr_GpSGp = (G_p.cwiseProduct(SG_p)).sum();
+
+        return tr_QSQ + (tr_GpSGp / p);
+    }
+
+
 
     // Stochastic approximation of tr[S'S] using Hutch++
     double edf_StS_hutchpp(int r = 100, int seed = random_seed) {
@@ -519,7 +564,7 @@ struct fe_ls_elliptic {
         double tr_QSSQ = SQ.squaredNorm();
 
         // (I - QQ')G 
-        matrix_t G_p = G - Q * Q.transpose() * G;
+        matrix_t G_p = G - Q * (Q.transpose() * G);
         matrix_t SG_p = apply_S(G_p);
         double tr_GpSSGp = SG_p.squaredNorm();
 

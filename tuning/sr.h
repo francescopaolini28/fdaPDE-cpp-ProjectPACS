@@ -112,7 +112,7 @@ class SRPDE {
 
         static double improved_aic_criterion(const criterion_data& d) {
             return std::log(d.rss / d.n) + 1.0 + 2.0 * (1.0 + (d.n - d.dor)) / (d.dor - 2.0);
-        }
+        } 
 
 
         //Constructors
@@ -188,6 +188,7 @@ class SRPDE {
             }
 
             
+
             double rss = (model_->fitted() - model_->response()).squaredNorm();
             double edf = edf_cache_.at(lambda_vec);
             double dor = n_ - (q_ + edf);   // residual degrees of freedom, trace of (I - S)
@@ -229,12 +230,17 @@ class SRPDE {
     computeLambda rcv(const typename computeLambda::edf_cache_t& edf_cache) { return computeLambda(this, edf_cache, &computeLambda::rcv_criterion); }
     computeLambda rcv(int r, int seed) { return computeLambda(this, r, seed, &computeLambda::rcv_criterion); }
     computeLambda rcv(const typename computeLambda::edf_cache_t& edf_cache, int r, int seed) { return computeLambda(this, edf_cache, r, seed, &computeLambda::rcv_criterion); }
-
+    //aic
     computeLambda aic() { return computeLambda(this, &computeLambda::aic_criterion); }
     computeLambda aic(const typename computeLambda::edf_cache_t& edf_cache) { return computeLambda(this, edf_cache, &computeLambda::aic_criterion); }
     computeLambda aic(int r, int seed) { return computeLambda(this, r, seed, &computeLambda::aic_criterion); }
     computeLambda aic(const typename computeLambda::edf_cache_t& edf_cache, int r, int seed) { return computeLambda(this, edf_cache, r, seed, &computeLambda::aic_criterion); }
-
+    //gfaic
+    computeLambda gfaic() { return computeLambda(this, &computeLambda::gfaic_criterion); }
+    computeLambda gfaic(const typename computeLambda::edf_cache_t& edf_cache) { return computeLambda(this, edf_cache, &computeLambda::gfaic_criterion); }
+    computeLambda gfaic(int r, int seed) { return computeLambda(this, r, seed, &computeLambda::gfaic_criterion); }
+    computeLambda gfaic(const typename computeLambda::edf_cache_t& edf_cache, int r, int seed) { return computeLambda(this, edf_cache, r, seed, &computeLambda::gfaic_criterion); }
+    //improved_aic
     computeLambda improved_aic() { return computeLambda(this, &computeLambda::improved_aic_criterion); }
     computeLambda improved_aic(const typename computeLambda::edf_cache_t& edf_cache) { return computeLambda(this, edf_cache, &computeLambda::improved_aic_criterion); }
     computeLambda improved_aic(int r, int seed) { return computeLambda(this, r, seed, &computeLambda::improved_aic_criterion); }
