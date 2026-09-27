@@ -63,7 +63,9 @@ class SRPDE {
     int n_covs() const { return n_covs_; }
     int n_obs() const { return n_obs_; }
     double edf(int r = 100, int seed = random_seed) { return solver_.edf(r, seed); }
-    double edf_StS(int r = 100, int seed = random_seed) { return solver_.edf_StS(r, seed); }
+    double edf_SS(int r = 100, int seed = random_seed) { return solver_.edf_SS(r, seed); }
+    double edf_S_hutchpp(int r = 100, int seed = random_seed) { return solver_.edf_S_hutchpp(r, seed); }
+    double edf_SS_hutchpp(int r = 100, int seed = random_seed) { return solver_.edf_SS_hutchpp(r, seed); }
     const vector_t& response() const { return solver_.response(); }
     const matrix_t& design_matrix() const { return solver_.design_matrix(); }
     const sparse_matrix_t& weights() const { return solver_.weights(); }

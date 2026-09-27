@@ -393,9 +393,9 @@ struct fe_ls_elliptic {
         for (int i = 0; i < r; ++i) { trS += Ys_->row(i).dot(x.col(i).head(n_dofs_)); }
         return trS / r;
     }
-    /*
+    
     // Stochastic approximation of tr[S'S]
-    double edf_StS(int r = 100, int seed = random_seed) {
+    double edf_SS(int r = 100, int seed = random_seed) {
         fdapde_assert(lambda_saved_.has_value());
         if (!Bs_.has_value()) {
             int seed_ = (seed == random_seed) ? std::random_device()() : seed;
@@ -437,7 +437,7 @@ struct fe_ls_elliptic {
         }
         return trStS / r;
     }
-    */
+    
 
 
     // oracle that multiply the matrix passed in input with S
@@ -529,7 +529,7 @@ struct fe_ls_elliptic {
 
 
     // Stochastic approximation of tr[S'S] using Hutch++
-    double edf_StS_hutchpp(int r = 100, int seed = random_seed) {
+    double edf_SS_hutchpp(int r = 100, int seed = random_seed) {
 
         fdapde_assert(lambda_saved_.has_value());
         int seed_ = (seed == random_seed) ? std::random_device()() : seed;
