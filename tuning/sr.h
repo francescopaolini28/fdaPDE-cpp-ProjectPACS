@@ -90,18 +90,18 @@ class SRPDE {
 
         //Struct containing the data passed to a criterion
         struct criterion_data {
-            double n, q, rss, edf, dor, edf_SS;
+            double n, q, rss, edf, dor, edf_SS, sigma2;
         };
 
         //Function pointer type
         using criterion_function = double (*)(const criterion_data& data);
         
         static double gcv_criterion(const criterion_data& d) {
-            return (d.n / std::pow(d.dor, 2)) * d.rss;
+            return (d.n / (d.dor * d.dor)) * d.rss;
         }
 
         static double rcv_criterion(const criterion_data& d) {
-            return (1.0 / d.n) * d.rss * (1.0 + 1.0 / d.n + std::pow(d.n - d.dor, 2)) / std::pow(1.0 + 1.0 /d.n + (d.n - d.dor), 2);
+            return (1.0 / d.n) * d.rss * (1.0 + 1.0 / d.n + ((d.n - d.dor) * (d.n - d.dor))) / ((1.0 + 1.0 /d.n + (d.n - d.dor))* (1.0 + 1.0 /d.n + (d.n - d.dor)));
         }
 
         static double gfaic_criterion(const criterion_data& d) {
@@ -112,24 +112,59 @@ class SRPDE {
             return std::log(d.rss / d.n) + 1.0 + 2.0 * (1.0 + (d.n - d.dor)) / (d.dor - 2.0);
         } 
 
-        void compute_lambdaPilot () {
+        static double cp_criterion(const criterion_data& d){
+            return 1; 
+        }
+
+        static double risk_est_criterion(const criterion_data& d){
+            return 1; 
+        }
+
+        static double pse_criterion(const criterion_data& d){
+            return 1; 
+        }
+
+        void compute_sigmaHat () {
             fdapde_assert(lambda_grid_.size() > 0);
             double best_lam = lambda_grid_[0];
+            double best_rss = std::numeric_limits<double>::max();
             double min_gcv = std::numeric_limits<double>::max();
             for (double lam : lambda_grid_) {
-                model_->fit(lam);
-                double edf = model_->edf(r_, seed_);
+                model_->fit(lam);                
+                std::array<double, StaticInputSize> lam_vec{lam};
+                double edf;
+                if (edf_cache_.find(lam_vec) == edf_cache_.end()) {
+                    edf = model_->edf(r_, seed_);
+                    edf_cache_[lam_vec] = edf;
+                } else {
+                    edf = edf_cache_.at(lam_vec);
+                }
                 double rss = (model_->fitted() - model_->response()).squaredNorm();
                 double dor = n_ - (q_ + edf);
-                // gcv isnì the criterion chosen to select lambda_pilot
-                double gcv = (n_ / std::pow(dor, 2)) * rss;
+                // gcv is the criterion chosen to select lambda_pilot
+                double gcv = (n_ / (dor * dor)) * rss;
                 if (gcv < min_gcv) {
                     min_gcv = gcv;
                     best_lam = lam;
+                    best_rss = rss;
                 }
             }
-            lambda_pilot_ = best_lam;
+            if (criterion_function_ == &pse_criterion || criterion_function_ == &risk_est_criterion) {
+                double traceSS;
+                std::array<double, StaticInputSize> lam_vec{best_lam};
+                if (edf__SS_cache_.find(lam_vec) == edf_SS_cache_.end()) {
+                    traceSS = model_->edf_SS_hutchpp(r_, seed_);
+                    edf_SS_cache_[lam_vec] = traceSS;
+                } else {
+                    traceSS = edf_SS_cache_.at(lam_vec);
+                }
+                double traceS = edf_cache_.at(lam_vec);
+                sigma2_hat_ = best_rss / (n_ - 2 * traceS + traceSS);
+            }
+
         }
+
+        
 
 
         //Constructors
@@ -193,7 +228,7 @@ class SRPDE {
             seed_(seed),
             criterion_function_(criterion), 
             lambda_grid_(lambda_grid) { }
-
+            
 
         template <typename InputType_>
             requires(internals::is_subscriptable<InputType_, int>)
@@ -203,24 +238,28 @@ class SRPDE {
         template <typename... LambdaT>
             requires(std::is_convertible_v<LambdaT, double> && ...) && (sizeof...(LambdaT) == StaticInputSize)
         constexpr double operator()(LambdaT... lambda) {
-            model_->fit(static_cast<double>(lambda)...);
+
             std::array<double, StaticInputSize> lambda_vec {lambda...};
-            if(criterion_function_ != &pse_criterion && criterion_function_ != &risk_est_criterion) { 
-                if (edf_cache_.find(lambda_vec) == edf_cache_.end()) {   // cache Tr[S]
-                    edf_cache_[lambda_vec] = model_->edf(r_, seed_);
-                }
-            } else {
+
+            if((criterion_function_ == &pse_criterion || criterion_function_ == &risk_est_criterion || criterion_function_ == &cp_criterion) && !sigma2_hat_.has_value()) {
+                this->compute_sigmaHat();
+            }
+
+            model_->fit(static_cast<double>(lambda)...);
+            
+            if (edf_cache_.find(lambda_vec) == edf_cache_.end()) {   // cache Tr[S]
+                edf_cache_[lambda_vec] = model_->edf(r_, seed_);
+            }
+            if(criterion_function_ == &pse_criterion || criterion_function_ == &risk_est_criterion) {
                 if (edf_SS_cache_.find(lambda_vec) == edf_SS_cache_.end()) {   // cache Tr[S]
                     edf_SS_cache_[lambda_vec] = model_->edf_SS_hutchpp(r_, seed_);
                 }  
             }
-
-            if((criterion_function_ == &pse_criterion || criterion_function_ == &risk_est_criterion || criterion_function_ == &cp_criterion) && !lambda_pilot_.has_value()) {
-                this->compute_lambdaPilot();
-            }
+            
     
             double rss = (model_->fitted() - model_->response()).squaredNorm();
             double edf = edf_cache_.at(lambda_vec);
+            double edf_SS = edf_SS_cache_.at(lambda_vec);
             double dor = n_ - (q_ + edf);   // residual degrees of freedom, trace of (I - S)
             criterion_data data{
                 static_cast<double>(n_), //integer to double
@@ -228,7 +267,7 @@ class SRPDE {
                 rss,
                 edf,
                 dor,
-                0.0
+                edf_SS;
             };
             //fdapde_assert(criterion_function_ != nullptr);
             return criterion_function_(data);
@@ -250,7 +289,7 @@ class SRPDE {
         criterion_function criterion_function_ = &gcv_criterion;
         // data needed for the lambda pilot estimation
         std::vector<double> lambda_grid_;
-        std::optional<double> lambda_pilot_ = std::nullopt;
+        std::optional<double> sigma2_hat_ = std::nullopt;
     };
     //gcv
     computeLambda gcv() { return computeLambda(this, &computeLambda::gcv_criterion); }
