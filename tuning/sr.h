@@ -77,7 +77,7 @@ class SRPDE {
         return fitted_;
     }
 
-    // Generalized Cross Validation index
+    // Indexes to compute the optimal penalization term lambda
     struct computeLambda : public ScalarFieldBase<n_lambda, computeLambda> {
         using Base = ScalarFieldBase<1, computeLambda>;
         static constexpr int StaticInputSize = n_lambda;
@@ -90,7 +90,7 @@ class SRPDE {
 
         //Struct containing the data passed to a criterion
         struct criterion_data {
-            double n, q, rss, edf, dor, edf_SS, sigma2;
+            double n, q, rss, edf, dor, edf_SS, sigma2_hat
         };
 
         //Function pointer type
@@ -113,15 +113,11 @@ class SRPDE {
         } 
 
         static double cp_criterion(const criterion_data& d){
-            return 1; 
-        }
-
-        static double risk_est_criterion(const criterion_data& d){
-            return 1; 
+            return 1.0/d.n * (d.rss + 2*d.sigma2_hat*(d.n - d.dor) - d.sigma2_hat); 
         }
 
         static double pse_criterion(const criterion_data& d){
-            return 1; 
+            return d.sigma2_hat * (1.0 + (d.q + d.edf_SS)/d.n) + d.rss/d.n; 
         }
 
         void compute_sigmaHat () {
@@ -149,23 +145,22 @@ class SRPDE {
                     best_rss = rss;
                 }
             }
-            if (criterion_function_ == &pse_criterion || criterion_function_ == &risk_est_criterion) {
-                double traceSS;
-                std::array<double, StaticInputSize> lam_vec{best_lam};
-                if (edf__SS_cache_.find(lam_vec) == edf_SS_cache_.end()) {
+            model_->fit(best_lam);
+            std::array<double, StaticInputSize> best_lam_vec{best_lam};
+            double traceSS;
+            double traceS = edf_cache_.at(best_lam_vec);
+            if (criterion_function_ == &pse_criterion) {
+                if (edf_SS_cache_.find(best_lam_vec) == edf_SS_cache_.end()) {
                     traceSS = model_->edf_SS_hutchpp(r_, seed_);
-                    edf_SS_cache_[lam_vec] = traceSS;
+                    edf_SS_cache_[best_lam_vec] = traceSS;
                 } else {
-                    traceSS = edf_SS_cache_.at(lam_vec);
+                    traceSS = edf_SS_cache_.at(best_lam_vec);
                 }
-                double traceS = edf_cache_.at(lam_vec);
-                sigma2_hat_ = best_rss / (n_ - 2 * traceS + traceSS);
+                sigma2_hat_ = best_rss / (n_ - q_ - 2*traceS + traceSS);
+            } else {
+                sigma2_hat_ = best_rss / (n_ - traceS - q_);
             }
-
         }
-
-        
-
 
         //Constructors
         computeLambda() noexcept = default;
@@ -241,7 +236,7 @@ class SRPDE {
 
             std::array<double, StaticInputSize> lambda_vec {lambda...};
 
-            if((criterion_function_ == &pse_criterion || criterion_function_ == &risk_est_criterion || criterion_function_ == &cp_criterion) && !sigma2_hat_.has_value()) {
+            if((criterion_function_ == &pse_criterion || criterion_function_ == &cp_criterion) && !sigma2_hat_.has_value()) {
                 this->compute_sigmaHat();
             }
 
@@ -250,26 +245,31 @@ class SRPDE {
             if (edf_cache_.find(lambda_vec) == edf_cache_.end()) {   // cache Tr[S]
                 edf_cache_[lambda_vec] = model_->edf(r_, seed_);
             }
-            if(criterion_function_ == &pse_criterion || criterion_function_ == &risk_est_criterion) {
+            double edf_SS = 0.0;
+            if(criterion_function_ == &pse_criterion) {
                 if (edf_SS_cache_.find(lambda_vec) == edf_SS_cache_.end()) {   // cache Tr[S]
                     edf_SS_cache_[lambda_vec] = model_->edf_SS_hutchpp(r_, seed_);
-                }  
+                }
+                edf_SS = edf_SS_cache_.at(lambda_vec);  
             }
-            
     
             double rss = (model_->fitted() - model_->response()).squaredNorm();
             double edf = edf_cache_.at(lambda_vec);
-            double edf_SS = edf_SS_cache_.at(lambda_vec);
             double dor = n_ - (q_ + edf);   // residual degrees of freedom, trace of (I - S)
+            double sigma2_hat = 0.0;
+            if (sigma2_hat_.has_value()) {
+                sigma2_hat = sigma2_hat_.value();
+            }
             criterion_data data{
-                static_cast<double>(n_), //integer to double
-                static_cast<double>(q_), //integer to double
+                static_cast<double> n_, //converting to double
+                static_cast<double> q_, //converting to double
                 rss,
                 edf,
                 dor,
-                edf_SS;
+                edf_SS,
+                sigma2_hat
             };
-            //fdapde_assert(criterion_function_ != nullptr);
+            fdapde_assert(criterion_function_ != nullptr);
             return criterion_function_(data);
         }
         // observers & setters
@@ -311,14 +311,19 @@ class SRPDE {
     computeLambda improved_aic(const typename computeLambda::edf_cache_t& edf_cache) { return computeLambda(this, edf_cache, &computeLambda::improved_aic_criterion); }
     computeLambda improved_aic(int r, int seed) { return computeLambda(this, r, seed, &computeLambda::improved_aic_criterion); }
     computeLambda improved_aic(const typename computeLambda::edf_cache_t& edf_cache, int r, int seed) { return computeLambda(this, edf_cache, r, seed, &computeLambda::improved_aic_criterion); }
-/*
-    computeLambda gcv() { return computeLambda(this, &computeLambda::gcv_criterion); }
-    computeLambda gcv(const typename computeLambda::edf_cache_t& edf_cache) { return computeLambda(this, edf_cache, &computeLambda::gcv_criterion); }
-    computeLambda gcv(const typename computeLambda::edf_cache_t& edf_cache, const typename computeLambda::edf_cache_t& edf_SS_cache) { return computeLambda(this, edf_cache, edf_SS_cache, &computeLambda::gcv_criterion); }
-    computeLambda gcv(int r, int seed) { return computeLambda(this, r, seed, &computeLambda::gcv_criterion); }
-    computeLambda gcv(const typename computeLambda::edf_cache_t& edf_cache, int r, int seed) { return computeLambda(this, edf_cache, r, seed, &computeLambda::gcv_criterion); }
-    computeLambda gcv(const typename computeLambda::edf_cache_t& edf_cache, const typename computeLambda::edf_cache_t& edf_SS_cache, int r, int seed) { return computeLambda(this, edf_cache, edf_SS_cache, r, seed, &computeLambda::gcv_criterion); }
-*/
+    //cp
+    computeLambda cp() { return computeLambda(this, &computeLambda::cp_criterion); }
+    computeLambda cp(const typename computeLambda::edf_cache_t& edf_cache) { return computeLambda(this, edf_cache, &computeLambda::cp_criterion); }
+    computeLambda cp(int r, int seed) { return computeLambda(this, r, seed, &computeLambda::cp_criterion); }
+    computeLambda cp(const typename computeLambda::edf_cache_t& edf_cache, int r, int seed) { return computeLambda(this, edf_cache, r, seed, &computeLambda::cp_criterion); }
+    //pse
+    computeLambda pse() { return computeLambda(this, &computeLambda::pse_criterion); }
+    computeLambda pse(const typename computeLambda::edf_cache_t& edf_cache) { return computeLambda(this, edf_cache, &computeLambda::pse_criterion); }
+    computeLambda pse(const typename computeLambda::edf_cache_t& edf_cache, const typename computeLambda::edf_cache_t& edf_SS_cache) { return computeLambda(this, edf_cache, edf_SS_cache, &computeLambda::pse_criterion); }
+    computeLambda pse(int r, int seed) { return computeLambda(this, r, seed, &computeLambda::pse_criterion); }
+    computeLambda pse(const typename computeLambda::edf_cache_t& edf_cache, int r, int seed) { return computeLambda(this, edf_cache, r, seed, &computeLambda::pse_criterion); }
+    computeLambda pse(const typename computeLambda::edf_cache_t& edf_cache, const typename computeLambda::edf_cache_t& edf_SS_cache, int r, int seed) { return computeLambda(this, edf_cache, edf_SS_cache, r, seed, &computeLambda::pse_criterion); }
+
     // inference
     class wald_t {
         using matrix_t = Eigen::Matrix<double, Dynamic, Dynamic>;
