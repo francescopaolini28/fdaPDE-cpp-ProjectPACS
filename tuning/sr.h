@@ -104,10 +104,6 @@ class SRPDE {
             return (1.0 / d.n) * d.rss * (1.0 + 1.0 / d.n + std::pow(d.n - d.dor, 2)) / std::pow(1.0 + 1.0 /d.n + (d.n - d.dor), 2);
         }
 
-        static double aic_criterion(const criterion_data& d) {
-            return d.n * std::log(d.rss / d.n) + 2.0 * (d.n - d.dor);
-        }
-
         static double gfaic_criterion(const criterion_data& d) {
             return (d.rss / d.n) + std::exp(2.0 * (d.n - d.dor)) / d.n;
         }
@@ -116,37 +112,58 @@ class SRPDE {
             return std::log(d.rss / d.n) + 1.0 + 2.0 * (1.0 + (d.n - d.dor)) / (d.dor - 2.0);
         } 
 
+        void compute_lambdaPilot () {
+            fdapde_assert(lambda_grid_.size() > 0);
+            double best_lam = lambda_grid_[0];
+            double min_gcv = std::numeric_limits<double>::max();
+            for (double lam : lambda_grid_) {
+                model_->fit(lam);
+                double edf = model_->edf(r_, seed_);
+                double rss = (model_->fitted() - model_->response()).squaredNorm();
+                double dor = n_ - (q_ + edf);
+                // gcv isnì the criterion chosen to select lambda_pilot
+                double gcv = (n_ / std::pow(dor, 2)) * rss;
+                if (gcv < min_gcv) {
+                    min_gcv = gcv;
+                    best_lam = lam;
+                }
+            }
+            lambda_pilot_ = best_lam;
+        }
+
 
         //Constructors
         computeLambda() noexcept = default;
 
-        computeLambda(SRPDE* model, criterion_function criterion) :
+        computeLambda(SRPDE* model, const criterion_function& criterion, const std::vector<double>& lambda_grid = {1e-4, 1e-3, 1e-2, 0.1, 1.0}) :
             model_(model),
             n_(model->n_obs()),
             q_(model->n_covs()),
             r_(100),
             seed_(random_seed),
-            criterion_function_(criterion)  { }
-
-        computeLambda(SRPDE* model, const edf_cache_t& edf_cache, criterion_function criterion) :
+            criterion_function_(criterion),
+            lambda_grid_(lambda_grid) { }
+        computeLambda(SRPDE* model, const edf_cache_t& edf_cache, const criterion_function& criterion, const std::vector<double>& lambda_grid = {1e-4, 1e-3, 1e-2, 0.1, 1.0}) :
             model_(model),
             n_(model->n_obs()),
             q_(model->n_covs()),
             edf_cache_(edf_cache),
             r_(100),
             seed_(random_seed),
-            criterion_function_(criterion) { }     
-        computeLambda(SRPDE* model, const edf_cache_t& edf_cache, int r, int seed, criterion_function criterion) :
+            criterion_function_(criterion),
+            lambda_grid_(lambda_grid) { }     
+        computeLambda(SRPDE* model, const edf_cache_t& edf_cache, int r, int seed, const criterion_function& criterion, const std::vector<double>& lambda_grid = {1e-4, 1e-3, 1e-2, 0.1, 1.0}) :
             model_(model), 
             n_(model->n_obs()), 
             q_(model->n_covs()), 
             edf_cache_(edf_cache), 
             r_(r), 
             seed_(seed),
-            criterion_function_(criterion){ }
+            criterion_function_(criterion), 
+            lambda_grid_(lambda_grid) { }
         // gcv_t(SRPDE* model) : gcv_t(model, edf_cache_t()) { }
         // gcv_t(SRPDE* model, int r, int seed) : gcv_t(model, edf_cache_t(), r, seed) { }
-        computeLambda(SRPDE* model, const edf_cache_t& edf_cache, const edf_cache_t& edf_SS_cache, criterion_function criterion) :
+        computeLambda(SRPDE* model, const edf_cache_t& edf_cache, const edf_cache_t& edf_SS_cache, const criterion_function& criterion, const std::vector<double>& lambda_grid = {1e-4, 1e-3, 1e-2, 0.1, 1.0}) :
             model_(model),
             n_(model->n_obs()),
             q_(model->n_covs()),
@@ -154,9 +171,10 @@ class SRPDE {
             edf_SS_cache_(edf_SS_cache), 
             r_(100),
             seed_(random_seed),
-            criterion_function_(criterion) { }
+            criterion_function_(criterion), 
+            lambda_grid_(lambda_grid) { }
 
-        computeLambda(SRPDE* model, const edf_cache_t& edf_cache, const edf_cache_t& edf_SS_cache, int r, int seed, criterion_function criterion) :
+        computeLambda(SRPDE* model, const edf_cache_t& edf_cache, const edf_cache_t& edf_SS_cache, int r, int seed, const criterion_function& criterion, const std::vector<double>& lambda_grid = {1e-4, 1e-3, 1e-2, 0.1, 1.0}) :
             model_(model), 
             n_(model->n_obs()), 
             q_(model->n_covs()), 
@@ -164,15 +182,17 @@ class SRPDE {
             edf_SS_cache_(edf_SS_cache), 
             r_(r), 
             seed_(seed), 
-            criterion_function_(criterion){ }
+            criterion_function_(criterion), 
+            lambda_grid_(lambda_grid){ }
 
-        computeLambda(SRPDE* model, int r, int seed, criterion_function criterion) :
+        computeLambda(SRPDE* model, int r, int seed, const criterion_function& criterion, const std::vector<double>& lambda_grid = {1e-4, 1e-3, 1e-2, 0.1, 1.0}) :
             model_(model),
             n_(model->n_obs()), 
             q_(model->n_covs()), 
             r_(r), 
             seed_(seed),
-            criterion_function_(criterion) { }
+            criterion_function_(criterion), 
+            lambda_grid_(lambda_grid) { }
 
 
         template <typename InputType_>
@@ -185,12 +205,20 @@ class SRPDE {
         constexpr double operator()(LambdaT... lambda) {
             model_->fit(static_cast<double>(lambda)...);
             std::array<double, StaticInputSize> lambda_vec {lambda...};
-            if (edf_cache_.find(lambda_vec) == edf_cache_.end()) {   // cache Tr[S]
-                edf_cache_[lambda_vec] = model_->edf(r_, seed_);
+            if(criterion_function_ != &pse_criterion && criterion_function_ != &risk_est_criterion) { 
+                if (edf_cache_.find(lambda_vec) == edf_cache_.end()) {   // cache Tr[S]
+                    edf_cache_[lambda_vec] = model_->edf(r_, seed_);
+                }
+            } else {
+                if (edf_SS_cache_.find(lambda_vec) == edf_SS_cache_.end()) {   // cache Tr[S]
+                    edf_SS_cache_[lambda_vec] = model_->edf_SS_hutchpp(r_, seed_);
+                }  
             }
 
-            
-
+            if((criterion_function_ == &pse_criterion || criterion_function_ == &risk_est_criterion || criterion_function_ == &cp_criterion) && !lambda_pilot_.has_value()) {
+                this->compute_lambdaPilot();
+            }
+    
             double rss = (model_->fitted() - model_->response()).squaredNorm();
             double edf = edf_cache_.at(lambda_vec);
             double dor = n_ - (q_ + edf);   // residual degrees of freedom, trace of (I - S)
@@ -202,10 +230,8 @@ class SRPDE {
                 dor,
                 0.0
             };
-            
             //fdapde_assert(criterion_function_ != nullptr);
             return criterion_function_(data);
-
         }
         // observers & setters
         const edf_cache_t& edf_cache() const { return edf_cache_; }
@@ -220,7 +246,11 @@ class SRPDE {
         edf_cache_t edf_SS_cache_;
         // stochastic edf approximation parameter
         int r_, seed_;
+        // default criterion is gcv
         criterion_function criterion_function_ = &gcv_criterion;
+        // data needed for the lambda pilot estimation
+        std::vector<double> lambda_grid_;
+        std::optional<double> lambda_pilot_ = std::nullopt;
     };
     //gcv
     computeLambda gcv() { return computeLambda(this, &computeLambda::gcv_criterion); }
@@ -232,11 +262,6 @@ class SRPDE {
     computeLambda rcv(const typename computeLambda::edf_cache_t& edf_cache) { return computeLambda(this, edf_cache, &computeLambda::rcv_criterion); }
     computeLambda rcv(int r, int seed) { return computeLambda(this, r, seed, &computeLambda::rcv_criterion); }
     computeLambda rcv(const typename computeLambda::edf_cache_t& edf_cache, int r, int seed) { return computeLambda(this, edf_cache, r, seed, &computeLambda::rcv_criterion); }
-    //aic
-    computeLambda aic() { return computeLambda(this, &computeLambda::aic_criterion); }
-    computeLambda aic(const typename computeLambda::edf_cache_t& edf_cache) { return computeLambda(this, edf_cache, &computeLambda::aic_criterion); }
-    computeLambda aic(int r, int seed) { return computeLambda(this, r, seed, &computeLambda::aic_criterion); }
-    computeLambda aic(const typename computeLambda::edf_cache_t& edf_cache, int r, int seed) { return computeLambda(this, edf_cache, r, seed, &computeLambda::aic_criterion); }
     //gfaic
     computeLambda gfaic() { return computeLambda(this, &computeLambda::gfaic_criterion); }
     computeLambda gfaic(const typename computeLambda::edf_cache_t& edf_cache) { return computeLambda(this, edf_cache, &computeLambda::gfaic_criterion); }
