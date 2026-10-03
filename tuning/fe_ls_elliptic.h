@@ -99,7 +99,7 @@ struct fe_ls_elliptic {
     }
 
 
-    //apply S*A
+    //apply S*M
     matrix_t apply_S(const matrix_t& M) {
 
         int cols = M.cols();
@@ -141,7 +141,47 @@ struct fe_ls_elliptic {
         return SM;
     };
 
+    // S'*M, work in progress, not yet tested
+    matrix_t apply_St(const matrix_t& M) {
 
+        int cols = M.cols();
+        // leet's see if introduce a cache
+        matrix_t Bs_local = matrix_t::Zero(2 * n_dofs_, cols);
+        
+        if (n_covs_ == 0) {
+            Bs_local.topRows(n_dofs_) = PsiNA().transpose() * M;
+        } else {
+            Bs_local.topRows(n_dofs_) = - D_ * PsiNA() * internals::lmbQ(W_, X_, invXtWX_, M);
+        }
+        
+        // Boundary conditions enforcement, if any
+        for (size_t i = 0; i < dirichlet_dofs_.size(); ++i) {
+            Bs_local.row(dirichlet_dofs_[i]).setConstant(dirichlet_vals_[i]);
+        }
+
+        //for (size_t i = 0; i < dirichlet_dofs_.size(); ++i) {
+        //    Bs_local.row(dirichlet_dofs_[i]).setZero(); 
+        //}
+        
+        
+        // Solving for f_sim (stored in matrix x_)
+        matrix_t x_ = n_covs_ == 0 ? invA_.solve(Bs_local) : woodbury_system_solve(invA_, U_, XtWX_, V_, Bs_local);
+        
+        
+        // perform matrix multiplication n_locs_ * 
+        matrix_t SM(n_locs_, cols);
+
+        for (int i = 0; i < cols; ++i) {
+            vector_t f_sim = x_.col(i).head(n_dofs_);
+            if (n_covs_ == 0) {
+                SM.col(i) = Psi_ * f_sim;
+            } else {
+                vector_t beta_sim = invXtWXXtW_ * (M.col(i) - Psi_ * f_sim);
+                SM.col(i) = Psi_ * f_sim + X_ * beta_sim;
+            }
+        }
+        return SM;
+    };
 
    public:
 
@@ -860,6 +900,47 @@ struct fe_ls_elliptic {
             }
 
             Y = solver.apply_S(O);
+            Eigen::HouseholderQR<matrix_t> qr(Y);
+            matrix_t Q = qr.householderQ() * matrix_t::Identity(solver.n_locs_, p);
+            matrix_t R = qr.matrixQR().topRows(p).triangularView<Eigen::Upper>();
+            matrix_t Z = solver.apply_S(Q);
+            matrix_t H = Q.transpose() * Z;
+            matrix_t W = Q.transpose() * O;
+            matrix_t T = Z.transpose() * O;
+            matrix_t S = R.transpose().inverse();
+            // Normalizing S
+            for (int i = 0; i < p; i++) {S.col(i).normalize(); } //each element is normalized by the L2 norm of its column
+            //Estimating The trace
+            double trace_H = H.trace();
+            double trace = 0.0;
+            for (int i = 0; i < p; i++) {
+                vector_t w_i = W.col(i);
+                vector_t s_i = S.col(i);
+                vector_t r_i = R.col(i);
+                vector_t t_i = T.col(i);
+                vector_t x_i = w_i - s_i.dot(w_i) * s_i;
+                trace += trace_H - s_i.dot((H*s_i)) + w_i.dot(s_i)*s_i.dot(r_i) - t_i.dot(x_i) + x_i.dot(H*x_i);
+            }
+            return trace/p;
+        }
+
+        template <typename SolverType>
+        double compute_SS(SolverType& solver) const {
+            fdapde_assert(solver.lambda_saved_.has_value());
+            std::mt19937 rng(seed_);
+            rademacher_distribution rademacher;
+            //Making sure m is an even integer (Xtrace requirement)
+            int m = (r_ / 2) * 2; 
+            int p = m / 2;
+            matrix_t O(solver.n_locs_, p);
+            matrix_t Y(solver.n_locs_, p);
+            for (int i = 0; i < solver.n_locs_; ++i) {
+                for (int j = 0; j < p; ++j) { 
+                    O(i, j) = rademacher(rng);
+                }
+            }
+
+            Y = solver.apply_S(solver.apply_S(O));
             Eigen::HouseholderQR<matrix_t> qr(Y);
             matrix_t Q = qr.householderQ() * matrix_t::Identity(solver.n_locs_, p);
             matrix_t R = qr.matrixQR().topRows(p).triangularView<Eigen::Upper>();
