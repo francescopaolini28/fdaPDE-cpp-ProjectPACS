@@ -97,7 +97,54 @@ struct fe_ls_elliptic {
         }
 	return;
     }
+
+
+    //apply S*A
+    matrix_t apply_S(const matrix_t& M) {
+
+        int cols = M.cols();
+        // leet's see if introduce a cache
+        matrix_t Bs_local = matrix_t::Zero(2 * n_dofs_, cols);
+        
+        if (n_covs_ == 0) {
+            Bs_local.topRows(n_dofs_) = -PsiNA().transpose() * D_ * W_ * M;
+        } else {
+            Bs_local.topRows(n_dofs_) = -PsiNA().transpose() * D_ * internals::lmbQ(W_, X_, invXtWX_, M);
+        }
+        
+        // Boundary conditions enforcement, if any
+        for (size_t i = 0; i < dirichlet_dofs_.size(); ++i) {
+            Bs_local.row(dirichlet_dofs_[i]).setConstant(dirichlet_vals_[i]);
+        }
+
+        //for (size_t i = 0; i < dirichlet_dofs_.size(); ++i) {
+        //    Bs_local.row(dirichlet_dofs_[i]).setZero(); 
+        //}
+        
+        
+        // Solving for f_sim (stored in matrix x_)
+        matrix_t x_ = n_covs_ == 0 ? invA_.solve(Bs_local) : woodbury_system_solve(invA_, U_, XtWX_, V_, Bs_local);
+        
+        
+        // perform matrix multiplication n_locs_ * 
+        matrix_t SM(n_locs_, cols);
+
+        for (int i = 0; i < cols; ++i) {
+            vector_t f_sim = x_.col(i).head(n_dofs_);
+            if (n_covs_ == 0) {
+                SM.col(i) = Psi_ * f_sim;
+            } else {
+                vector_t beta_sim = invXtWXXtW_ * (M.col(i) - Psi_ * f_sim);
+                SM.col(i) = Psi_ * f_sim + X_ * beta_sim;
+            }
+        }
+        return SM;
+    };
+
+
+
    public:
+
     static constexpr int n_lambda = 1;
     using solver_category = ls_solver;
 
@@ -358,6 +405,8 @@ struct fe_ls_elliptic {
         return f_;
     }
 
+
+    /*
     // hutchinson approximation for Tr[S]
     // r is the number of stochastic realization of the Monte Carlo, bigger r -> more precise estimate of edf
     // the default value 100 has been checked to provide good approximations in different experimental settings
@@ -436,52 +485,10 @@ struct fe_ls_elliptic {
             }
         }
         return trStS / r;
-    }
-    
+    } */
 
 
-    // oracle that multiply the matrix passed in input with S
-
-    matrix_t apply_S(const matrix_t& M) {
-
-        int cols = M.cols();
-        // leet's see if introduce a cache
-        matrix_t Bs_local = matrix_t::Zero(2 * n_dofs_, cols);
-        
-        if (n_covs_ == 0) {
-            Bs_local.topRows(n_dofs_) = -PsiNA().transpose() * D_ * W_ * M;
-        } else {
-            Bs_local.topRows(n_dofs_) = -PsiNA().transpose() * D_ * internals::lmbQ(W_, X_, invXtWX_, M);
-        }
-        
-        // Boundary conditions enforcement, if any
-        for (size_t i = 0; i < dirichlet_dofs_.size(); ++i) {
-            Bs_local.row(dirichlet_dofs_[i]).setConstant(dirichlet_vals_[i]);
-        }
-
-        //for (size_t i = 0; i < dirichlet_dofs_.size(); ++i) {
-        //    Bs_local.row(dirichlet_dofs_[i]).setZero(); 
-        //}
-        
-        // Solving for f_sim (stored in matrix x_)
-        matrix_t x_ = n_covs_ == 0 ? invA_.solve(Bs_local) : woodbury_system_solve(invA_, U_, XtWX_, V_, Bs_local);
-        
-        // perform matrix multiplication n_locs_ * 
-        matrix_t SM(n_locs_, cols);
-
-        for (int i = 0; i < cols; ++i) {
-            vector_t f_sim = x_.col(i).head(n_dofs_);
-            if (n_covs_ == 0) {
-                SM.col(i) = Psi_ * f_sim;
-            } else {
-                vector_t beta_sim = invXtWXXtW_ * (M.col(i) - Psi_ * f_sim);
-                SM.col(i) = Psi_ * f_sim + X_ * beta_sim;
-            }
-        }
-        return SM;
-    };
-
-
+    /*
     // Stochastic approximation of tr[S] using Hutch++
     double edf_S_hutchpp(int r = 100, int seed = random_seed) {
 
@@ -515,6 +522,7 @@ struct fe_ls_elliptic {
         
         // Tr(Q'SQ) element-wise(Hadamard) product
         double tr_QSQ = (Q.cwiseProduct(SQ)).sum();
+        
 
         // (I - QQ')G
         matrix_t G_p = G - Q * (Q.transpose() * G);
@@ -571,6 +579,11 @@ struct fe_ls_elliptic {
         return tr_QSSQ + (tr_GpSSGp / p); 
     }
 
+    */
+
+
+
+
     template <typename LambdaT>
         requires(internals::is_vector_like_v<LambdaT> || std::is_floating_point_v<LambdaT>)
     double edf(const LambdaT& lambda, int r = 100, int seed = random_seed) {
@@ -589,7 +602,8 @@ struct fe_ls_elliptic {
             invA_.compute(A);
             lambda_saved_ = lambda_;
         }
-        return edf(r, seed);
+        Hutch estimator(r, seed);
+        return edf(estimator);
     }
     // penalty matrix: \lambda * R1^\top * (R0)^{-1} * R1
     matrix_t P(double lambda) const {
@@ -639,6 +653,200 @@ struct fe_ls_elliptic {
   
     const matrix_t& U() const { return U_; }
     const matrix_t& V() const { return V_; }
+
+
+    struct Hutch {
+        public:
+
+        Hutch(int r = 100, int seed = random_seed) noexcept : r_(r), seed_(seed == random_seed ? std::random_device()() : seed) {    }
+
+        template <typename SolverType>
+        double compute_S(SolverType& solver) const {
+            fdapde_assert(solver.lambda_saved_.has_value());
+            if (!solver.Ys_.has_value() || !solver.Bs_.has_value()) {
+                std::mt19937 rng(seed_);
+                rademacher_distribution rademacher;
+                solver.Us_ = matrix_t(solver.n_locs_, r_);
+                for (int i = 0; i < solver.n_locs_; ++i) {
+                    // sampling from a Rademacher distribution
+                    for (int j = 0; j < r_; ++j) { solver.Us_->operator()(i, j) = rademacher(rng); }
+                }
+                //construction of Y
+                solver.Ys_ = solver.Us_->transpose() * solver.Psi_;
+                solver.Bs_ = matrix_t::Zero(2 * solver.n_dofs_, r_);   // implicitly enforce homogeneous forcing
+            }
+            // Construction of Bs
+            if (solver.n_covs_ == 0) {
+                solver.Bs_->topRows(solver.n_dofs_) = -solver.PsiNA().transpose() * solver.D_ * solver.W_ * (*solver.Us_);
+            } else {
+                solver.Bs_->topRows(solver.n_dofs_) = -solver.PsiNA().transpose() * solver.D_ * internals::lmbQ(solver.W_, solver.X_, solver.invXtWX_, *solver.Us_);
+            }
+            // enforce Dirichlet BCs, if any
+            for (size_t i = 0; i < solver.dirichlet_dofs_.size(); ++i) {
+                solver.Bs_->row(solver.dirichlet_dofs_[i]).setConstant(solver.dirichlet_vals_[i]);
+            }
+            //SMW decomposition to solve MsX = Bs
+            // Approximately O(N) due to the sparsity pattern of A, invA_ is Ms
+            matrix_t x = solver.n_covs_ == 0 ? solver.invA_.solve(*solver.Bs_) : woodbury_system_solve(solver.invA_, solver.U_, solver.XtWX_, solver.V_, *solver.Bs_); 
+            double trS = 0;   // monte carlo Tr[S] approximation
+            for (int i = 0; i < r_; ++i) { trS += solver.Ys_->row(i).dot(x.col(i).head(solver.n_dofs_)); }
+            return trS / r_;
+        }
+
+        template <typename SolverType>
+        double compute_SS(SolverType& solver) const {
+            
+            fdapde_assert(solver.lambda_saved_.has_value());
+            if (!solver.Bs_.has_value()) {
+                std::mt19937 rng(seed_);
+                rademacher_distribution rademacher;
+                solver.Us_ = matrix_t(solver.n_locs_, r_);
+                for (int i = 0; i < solver.n_locs_; ++i) {
+                    for (int j = 0; j < r_; ++j) { solver.Us_->operator()(i, j) = rademacher(rng); }
+                }
+                // Bs_ = Us_ projected onto the mesh space
+                solver.Bs_ = matrix_t::Zero(2 * solver.n_dofs_, r_);
+            }
+                
+            // Populating Bs_ (D_ and W_ take account for the weigths given to data and areal data. To be checked)
+            if (solver.n_covs_ == 0) {
+                solver.Bs_->topRows(solver.n_dofs_) = -solver.PsiNA().transpose() * solver.D_ * solver.W_ * (*solver.Us_);
+            } else {
+                solver.Bs_->topRows(solver.n_dofs_) = -solver.PsiNA().transpose() * solver.D_ * internals::lmbQ(solver.W_, solver.X_, solver.invXtWX_, *solver.Us_);
+            }
+            // enforce Dirichlet BCs, if any
+            for (size_t i = 0; i < solver.dirichlet_dofs_.size(); ++i) {
+                solver.Bs_->row(solver.dirichlet_dofs_[i]).setConstant(solver.dirichlet_vals_[i]);
+            }
+            // Solving for f_sim (stored in matrix x)
+            matrix_t x = solver.n_covs_ == 0 ? solver.invA_.solve(*solver.Bs_) : woodbury_system_solve(solver.invA_, solver.U_, solver.XtWX_, solver.V_, *solver.Bs_);
+                
+            double trStS = 0.0;
+            for (int i = 0; i < r_; ++i) {
+                vector_t f_sim = x.col(i).head(solver.n_dofs_);
+                if (solver.n_covs_ == 0) {
+                    // y_hat = S * u_i = Psi_ * f_sim 
+                    vector_t y_hat = solver.Psi_ * f_sim;
+                    trStS += y_hat.squaredNorm();
+                } else {
+                    vector_t beta_sim = solver.invXtWXXtW_ * (solver.Us_->col(i) - solver.Psi_ * f_sim);
+                    vector_t y_hat = solver.Psi_ * f_sim + solver.X_ * beta_sim;
+                    trStS += y_hat.squaredNorm();
+                }
+            }
+            return trStS / r_;
+        }
+        private:
+
+        int r_;
+        int seed_;
+    };
+     
+    struct Hutchpp {
+        public:
+        
+        Hutchpp() noexcept = default;
+        Hutchpp(int r = 100, int seed = random_seed) noexcept : r_(r), seed_(seed == random_seed ? std::random_device()() : seed) {    }
+
+        template <typename SolverType>
+        double compute_S(SolverType& solver) const {
+            fdapde_assert(solver.lambda_saved_.has_value());
+            std::mt19937 rng(seed_);
+            rademacher_distribution rademacher;
+
+            // Defining m as the closest multiple of 3 smaller than r
+            int m = (r_ / 3) * 3; 
+            int p = m / 3;
+
+            //H, G creation and population with rademacher (H corresponds to matrix S in the Hutch++ paper)
+            matrix_t H(solver.n_locs_, p);
+            matrix_t G(solver.n_locs_, p);
+            for (int i = 0; i < solver.n_locs_; ++i) {
+                for (int j = 0; j < p; ++j) { 
+                    H(i, j) = rademacher(rng);
+                    G(i, j) = rademacher(rng);
+                }
+            }
+            
+            // SH
+            matrix_t SH = solver.apply_S(H);
+            
+            Eigen::ColPivHouseholderQR<matrix_t> qr(SH);
+            matrix_t Q = qr.householderQ() * matrix_t::Identity(solver.n_locs_, p); //I retain only the first p (m/3) columns of Q
+
+            // SQ
+            matrix_t SQ = solver.apply_S(Q);
+            
+            // Tr(Q'SQ) element-wise(Hadamard) product
+            double tr_QSQ = (Q.cwiseProduct(SQ)).sum();
+            
+
+            // (I - QQ')G
+            matrix_t G_p = G - Q * (Q.transpose() * G);
+            matrix_t SG_p = solver.apply_S(G_p);
+            
+            // Tr(G_p'SG_p)
+            double tr_GpSGp = (G_p.cwiseProduct(SG_p)).sum();
+
+            return tr_QSQ + (tr_GpSGp / p);
+        }
+
+        template <typename SolverType>
+        double compute_SS(SolverType& solver) const {
+            
+            fdapde_assert(solver.lambda_saved_.has_value());
+            std::mt19937 rng(seed_);
+            rademacher_distribution rademacher;
+
+            // Defining m as the closest multiple of 3 smaller than r
+            int m = (r_ / 3) * 3; 
+            int p = m / 3;
+
+            //H, G creation and population with rademacher (H corresponds to matrix S in the Hutch++ paper)
+            matrix_t H(solver.n_locs_, p);
+            matrix_t G(solver.n_locs_, p);
+            for (int i = 0; i < solver.n_locs_; ++i) {
+                for (int j = 0; j < p; ++j) { 
+                    H(i, j) = rademacher(rng);
+                    G(i, j) = rademacher(rng);
+                }
+            }
+            
+            // S'SH
+            //double product to compute A'*S'S*A, only because S'S is symmetric
+            matrix_t SH = solver.apply_S(H);
+            matrix_t SSH = solver.apply_S(SH); //n_locs x p matrix, In the paper SSH = AS
+            
+            Eigen::ColPivHouseholderQR<matrix_t> qr(SSH);
+            matrix_t Q = qr.householderQ() * matrix_t::Identity(solver.n_locs_, p); //I retain only the first p (m/3) columns of Q
+
+            // tr(Q'SSQ)
+            matrix_t SQ = solver.apply_S(Q);
+            // always Frobenius norm on S'S
+            double tr_QSSQ = SQ.squaredNorm();
+
+            // (I - QQ')G 
+            matrix_t G_p = G - Q * (Q.transpose() * G);
+            matrix_t SG_p = solver.apply_S(G_p);
+            double tr_GpSSGp = SG_p.squaredNorm();
+
+            return tr_QSSQ + (tr_GpSSGp / p); 
+        }
+        private:
+
+        int r_;
+        int seed_;
+    };
+
+    template <typename TraceEstimator = Hutch>
+    double edf(const TraceEstimator& estimator = TraceEstimator()) {
+        return estimator.compute_S(*this); 
+    }
+    template <typename TraceEstimator = Hutch>
+    double edf_SS(const TraceEstimator& estimator = TraceEstimator()) {
+        return estimator.compute_SS(*this); 
+    }
+
    protected:
     std::optional<double> lambda_saved_ = -1;
     sparse_solver_t invA_;
@@ -669,6 +877,7 @@ struct fe_ls_elliptic {
     dense_solver_t invXtWX_;   // factorization of n_covs x n_covs matrix X^\top * W * X
     matrix_t invXtWXXtW_;      // n_covs x n_obs matrix (X^\top * X)^{-1} * (X^\top W)
     bool W_changed_;
+
 };
 
 }   // namespace internals

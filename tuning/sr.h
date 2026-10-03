@@ -62,10 +62,17 @@ class SRPDE {
     const vector_t& misfit() const { return solver_.misfit(); }
     int n_covs() const { return n_covs_; }
     int n_obs() const { return n_obs_; }
-    double edf(int r = 100, int seed = random_seed) { return solver_.edf(r, seed); }
-    double edf_SS(int r = 100, int seed = random_seed) { return solver_.edf_SS(r, seed); }
-    double edf_S_hutchpp(int r = 100, int seed = random_seed) { return solver_.edf_S_hutchpp(r, seed); }
-    double edf_SS_hutchpp(int r = 100, int seed = random_seed) { return solver_.edf_SS_hutchpp(r, seed); }
+
+
+    template <typename TraceEstimator = typename solver_t::Hutch>
+    double edf(const TraceEstimator& estimator = TraceEstimator()) { 
+        return solver_.edf(estimator); 
+    }
+    template <typename TraceEstimator = typename solver_t::Hutch>
+    double edf_SS(const TraceEstimator& estimator = TraceEstimator()) { 
+        return solver_.edf_SS(estimator); 
+    }
+
     const vector_t& response() const { return solver_.response(); }
     const matrix_t& design_matrix() const { return solver_.design_matrix(); }
     const sparse_matrix_t& weights() const { return solver_.weights(); }
@@ -90,7 +97,7 @@ class SRPDE {
 
         //Struct containing the data passed to a criterion
         struct criterion_data {
-            double n, q, rss, edf, dor, edf_SS, sigma2_hat
+            double n, q, rss, edf, dor, edf_SS, sigma2_hat;
         };
 
         //Function pointer type
@@ -105,7 +112,7 @@ class SRPDE {
         }
 
         static double gfaic_criterion(const criterion_data& d) {
-            return (d.rss / d.n) + std::exp(2.0 * (d.n - d.dor)) / d.n;
+            return (d.rss / d.n) + std::exp(2.0 * (d.n - d.dor) / d.n);
         }
 
         static double improved_aic_criterion(const criterion_data& d) {
@@ -130,7 +137,8 @@ class SRPDE {
                 std::array<double, StaticInputSize> lam_vec{lam};
                 double edf;
                 if (edf_cache_.find(lam_vec) == edf_cache_.end()) {
-                    edf = model_->edf(r_, seed_);
+                    typename solver_t::Hutch estimator(r_, seed_);
+                    edf = model_->edf(estimator);
                     edf_cache_[lam_vec] = edf;
                 } else {
                     edf = edf_cache_.at(lam_vec);
@@ -151,7 +159,8 @@ class SRPDE {
             double traceS = edf_cache_.at(best_lam_vec);
             if (criterion_function_ == &pse_criterion) {
                 if (edf_SS_cache_.find(best_lam_vec) == edf_SS_cache_.end()) {
-                    traceSS = model_->edf_SS_hutchpp(r_, seed_);
+                    typename solver_t::Hutchpp estimator_pp(r_, seed_);
+                    traceSS = model_->edf_SS(estimator_pp);
                     edf_SS_cache_[best_lam_vec] = traceSS;
                 } else {
                     traceSS = edf_SS_cache_.at(best_lam_vec);
@@ -243,12 +252,14 @@ class SRPDE {
             model_->fit(static_cast<double>(lambda)...);
             
             if (edf_cache_.find(lambda_vec) == edf_cache_.end()) {   // cache Tr[S]
-                edf_cache_[lambda_vec] = model_->edf(r_, seed_);
+                typename solver_t::Hutch estimator(r_, seed_);
+                edf_cache_[lambda_vec] = model_->edf(estimator);
             }
             double edf_SS = 0.0;
             if(criterion_function_ == &pse_criterion) {
                 if (edf_SS_cache_.find(lambda_vec) == edf_SS_cache_.end()) {   // cache Tr[S]
-                    edf_SS_cache_[lambda_vec] = model_->edf_SS_hutchpp(r_, seed_);
+                    typename solver_t::Hutchpp estimator_pp(r_, seed_);
+                    edf_SS_cache_[lambda_vec] = model_->edf_SS(estimator_pp);
                 }
                 edf_SS = edf_SS_cache_.at(lambda_vec);  
             }
@@ -261,8 +272,8 @@ class SRPDE {
                 sigma2_hat = sigma2_hat_.value();
             }
             criterion_data data{
-                static_cast<double> n_, //converting to double
-                static_cast<double> q_, //converting to double
+                static_cast<double>(n_), //converting to double
+                static_cast<double>(q_), //converting to double
                 rss,
                 edf,
                 dor,
