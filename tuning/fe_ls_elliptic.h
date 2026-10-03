@@ -745,7 +745,6 @@ struct fe_ls_elliptic {
     struct Hutchpp {
         public:
         
-        Hutchpp() noexcept = default;
         Hutchpp(int r = 100, int seed = random_seed) noexcept : r_(r), seed_(seed == random_seed ? std::random_device()() : seed) {    }
 
         template <typename SolverType>
@@ -837,6 +836,59 @@ struct fe_ls_elliptic {
         int r_;
         int seed_;
     };
+
+    struct Xtrace {
+
+        public:
+
+        Xtrace(int r = 100, int seed = random_seed) noexcept : r_(r), seed_(seed == random_seed ? std::random_device()() : seed) {    }
+
+        template <typename SolverType>
+        double compute_S(SolverType& solver) const {
+            fdapde_assert(solver.lambda_saved_.has_value());
+            std::mt19937 rng(seed_);
+            rademacher_distribution rademacher;
+            //Making sure m is an even integer (Xtrace requirement)
+            int m = (r_ / 2) * 2; 
+            int p = m / 2;
+            matrix_t O(solver.n_locs_, p);
+            matrix_t Y(solver.n_locs_, p);
+            for (int i = 0; i < solver.n_locs_; ++i) {
+                for (int j = 0; j < p; ++j) { 
+                    O(i, j) = rademacher(rng);
+                }
+            }
+
+            Y = solver.apply_S(O);
+            Eigen::HouseholderQR<matrix_t> qr(Y);
+            matrix_t Q = qr.householderQ() * matrix_t::Identity(solver.n_locs_, p);
+            matrix_t R = qr.matrixQR().topRows(p).triangularView<Eigen::Upper>();
+            matrix_t Z = solver.apply_S(Q);
+            matrix_t H = Q.transpose() * Z;
+            matrix_t W = Q.transpose() * O;
+            matrix_t T = Z.transpose() * O;
+            matrix_t S = R.transpose().inverse();
+            // Normalizing S
+            for (int i = 0; i < p; i++) {S.col(i).normalize(); } //each element is normalized by the L2 norm of its column
+            //Estimating The trace
+            double trace_H = H.trace();
+            double trace = 0.0;
+            for (int i = 0; i < p; i++) {
+                vector_t w_i = W.col(i);
+                vector_t s_i = S.col(i);
+                vector_t r_i = R.col(i);
+                vector_t t_i = T.col(i);
+                vector_t x_i = w_i - s_i.dot(w_i) * s_i;
+                trace += trace_H - s_i.dot((H*s_i)) + w_i.dot(s_i)*s_i.dot(r_i) - t_i.dot(x_i) + x_i.dot(H*x_i);
+            }
+            return trace/p;
+        }
+
+        private:
+
+        int r_;
+        int seed_;
+    }
 
     template <typename TraceEstimator = Hutch>
     double edf(const TraceEstimator& estimator = TraceEstimator()) {
