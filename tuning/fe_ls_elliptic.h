@@ -145,43 +145,32 @@ struct fe_ls_elliptic {
     matrix_t apply_St(const matrix_t& M) {
 
         int cols = M.cols();
-        // leet's see if introduce a cache
         matrix_t Bs_local = matrix_t::Zero(2 * n_dofs_, cols);
-        
-        if (n_covs_ == 0) {
-            Bs_local.topRows(n_dofs_) = PsiNA().transpose() * M;
-        } else {
-            Bs_local.topRows(n_dofs_) = - D_ * PsiNA() * internals::lmbQ(W_, X_, invXtWX_, M);
-        }
-        
-        // Boundary conditions enforcement, if any
-        for (size_t i = 0; i < dirichlet_dofs_.size(); ++i) {
-            Bs_local.row(dirichlet_dofs_[i]).setConstant(dirichlet_vals_[i]);
-        }
-
-        //for (size_t i = 0; i < dirichlet_dofs_.size(); ++i) {
-        //    Bs_local.row(dirichlet_dofs_[i]).setZero(); 
-        //}
-        
-        
-        // Solving for f_sim (stored in matrix x_)
-        matrix_t x_ = n_covs_ == 0 ? invA_.solve(Bs_local) : woodbury_system_solve(invA_, U_, XtWX_, V_, Bs_local);
-        
-        
-        // perform matrix multiplication n_locs_ * 
         matrix_t SM(n_locs_, cols);
-
-        for (int i = 0; i < cols; ++i) {
-            vector_t f_sim = x_.col(i).head(n_dofs_);
-            if (n_covs_ == 0) {
-                SM.col(i) = Psi_ * f_sim;
-            } else {
-                vector_t beta_sim = invXtWXXtW_ * (M.col(i) - Psi_ * f_sim);
-                SM.col(i) = Psi_ * f_sim + X_ * beta_sim;
+        if (n_covs_ == 0) {
+            Bs_local.topRows(n_dofs_) = Psi_.transpose() * M;            
+            for (size_t i = 0; i < dirichlet_dofs_.size(); ++i) {
+            Bs_local.row(dirichlet_dofs_[i]).setConstant(dirichlet_vals_[i]);
             }
+            matrix_t x_ = invA_.solve(Bs_local);
+            matrix_t f_sim = x_.topRows(n_dofs_);
+            SM = - W_ * (D_ * (PsiNA() * f_sim));
+        } else {
+            matrix_t XtM = X_.transpose() * M;
+            matrix_t PT_Xt_M = W_ * (X_ * invXtWX_.solve(XtM));
+            matrix_t M1 = M - PT_Xt_M;
+            Bs_local.topRows(n_dofs_) = Psi_.transpose() * M1;
+            for (size_t i = 0; i < dirichlet_dofs_.size(); ++i) {
+            Bs_local.row(dirichlet_dofs_[i]).setConstant(dirichlet_vals_[i]);
+            }
+            matrix_t x_ = woodbury_system_solve(invA_, U_, XtWX_, V_, Bs_local);
+            matrix_t f_sim = x_.topRows(n_dofs_);
+            matrix_t temp = - (D_ * (PsiNA() * f_sim));
+            matrix_t M3 = internals::lmbQ(W_, X_, invXtWX_, temp);
+            SM = PT_Xt_M + M3;
         }
         return SM;
-    };
+    }
 
    public:
 
@@ -940,11 +929,11 @@ struct fe_ls_elliptic {
                 }
             }
 
-            Y = solver.apply_S(solver.apply_S(O));
+            Y = solver.apply_St(solver.apply_S(O));
             Eigen::HouseholderQR<matrix_t> qr(Y);
             matrix_t Q = qr.householderQ() * matrix_t::Identity(solver.n_locs_, p);
             matrix_t R = qr.matrixQR().topRows(p).triangularView<Eigen::Upper>();
-            matrix_t Z = solver.apply_S(Q);
+            matrix_t Z = solver.apply_St(solver.apply_S(Q));
             matrix_t H = Q.transpose() * Z;
             matrix_t W = Q.transpose() * O;
             matrix_t T = Z.transpose() * O;
@@ -969,7 +958,7 @@ struct fe_ls_elliptic {
 
         int r_;
         int seed_;
-    }
+    };
 
     template <typename TraceEstimator = Hutch>
     double edf(const TraceEstimator& estimator = TraceEstimator()) {
