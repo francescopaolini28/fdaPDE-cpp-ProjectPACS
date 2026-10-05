@@ -103,32 +103,21 @@ struct fe_ls_elliptic {
     matrix_t apply_S(const matrix_t& M) {
 
         int cols = M.cols();
-        // leet's see if introduce a cache
         matrix_t Bs_local = matrix_t::Zero(2 * n_dofs_, cols);
-        
         if (n_covs_ == 0) {
             Bs_local.topRows(n_dofs_) = -PsiNA().transpose() * D_ * W_ * M;
         } else {
             Bs_local.topRows(n_dofs_) = -PsiNA().transpose() * D_ * internals::lmbQ(W_, X_, invXtWX_, M);
         }
-        
         // Boundary conditions enforcement, if any
         for (size_t i = 0; i < dirichlet_dofs_.size(); ++i) {
             Bs_local.row(dirichlet_dofs_[i]).setConstant(dirichlet_vals_[i]);
         }
-
         //for (size_t i = 0; i < dirichlet_dofs_.size(); ++i) {
         //    Bs_local.row(dirichlet_dofs_[i]).setZero(); 
         //}
-        
-        
-        // Solving for f_sim (stored in matrix x_)
         matrix_t x_ = n_covs_ == 0 ? invA_.solve(Bs_local) : woodbury_system_solve(invA_, U_, XtWX_, V_, Bs_local);
-        
-        
-        // perform matrix multiplication n_locs_ * 
         matrix_t SM(n_locs_, cols);
-
         for (int i = 0; i < cols; ++i) {
             vector_t f_sim = x_.col(i).head(n_dofs_);
             if (n_covs_ == 0) {
@@ -781,11 +770,9 @@ struct fe_ls_elliptic {
             fdapde_assert(solver.lambda_saved_.has_value());
             std::mt19937 rng(seed_);
             rademacher_distribution rademacher;
-
             // Defining m as the closest multiple of 3 smaller than r
             int m = (r_ / 3) * 3; 
             int p = m / 3;
-
             //H, G creation and population with rademacher (H corresponds to matrix S in the Hutch++ paper)
             matrix_t H(solver.n_locs_, p);
             matrix_t G(solver.n_locs_, p);
@@ -795,27 +782,17 @@ struct fe_ls_elliptic {
                     G(i, j) = rademacher(rng);
                 }
             }
-            
-            // SH
             matrix_t SH = solver.apply_S(H);
-            
             Eigen::ColPivHouseholderQR<matrix_t> qr(SH);
             matrix_t Q = qr.householderQ() * matrix_t::Identity(solver.n_locs_, p); //I retain only the first p (m/3) columns of Q
-
-            // SQ
             matrix_t SQ = solver.apply_S(Q);
-            
             // Tr(Q'SQ) element-wise(Hadamard) product
             double tr_QSQ = (Q.cwiseProduct(SQ)).sum();
-            
-
             // (I - QQ')G
             matrix_t G_p = G - Q * (Q.transpose() * G);
             matrix_t SG_p = solver.apply_S(G_p);
-            
             // Tr(G_p'SG_p)
             double tr_GpSGp = (G_p.cwiseProduct(SG_p)).sum();
-
             return tr_QSQ + (tr_GpSGp / p);
         }
 
@@ -825,11 +802,9 @@ struct fe_ls_elliptic {
             fdapde_assert(solver.lambda_saved_.has_value());
             std::mt19937 rng(seed_);
             rademacher_distribution rademacher;
-
             // Defining m as the closest multiple of 3 smaller than r
             int m = (r_ / 3) * 3; 
             int p = m / 3;
-
             //H, G creation and population with rademacher (H corresponds to matrix S in the Hutch++ paper)
             matrix_t H(solver.n_locs_, p);
             matrix_t G(solver.n_locs_, p);
@@ -839,25 +814,18 @@ struct fe_ls_elliptic {
                     G(i, j) = rademacher(rng);
                 }
             }
-            
             // S'SH
-            //double product to compute A'*S'S*A, only because S'S is symmetric
-            matrix_t SH = solver.apply_S(H);
-            matrix_t SSH = solver.apply_S(SH); //n_locs x p matrix, In the paper SSH = AS
-            
+            matrix_t SSH = solver.apply_St(solver.apply_S(H)); //n_locs x p matrix, In the paper SSH = AS
             Eigen::ColPivHouseholderQR<matrix_t> qr(SSH);
             matrix_t Q = qr.householderQ() * matrix_t::Identity(solver.n_locs_, p); //I retain only the first p (m/3) columns of Q
-
             // tr(Q'SSQ)
             matrix_t SQ = solver.apply_S(Q);
             // always Frobenius norm on S'S
             double tr_QSSQ = SQ.squaredNorm();
-
             // (I - QQ')G 
             matrix_t G_p = G - Q * (Q.transpose() * G);
             matrix_t SG_p = solver.apply_S(G_p);
             double tr_GpSSGp = SG_p.squaredNorm();
-
             return tr_QSSQ + (tr_GpSSGp / p); 
         }
         private:
@@ -896,7 +864,7 @@ struct fe_ls_elliptic {
             matrix_t H = Q.transpose() * Z;
             matrix_t W = Q.transpose() * O;
             matrix_t T = Z.transpose() * O;
-            matrix_t S = R.transpose().inverse();
+            matrix_t S = R.inverse().transpose();
             // Normalizing S
             for (int i = 0; i < p; i++) {S.col(i).normalize(); } //each element is normalized by the L2 norm of its column
             //Estimating The trace
@@ -937,7 +905,7 @@ struct fe_ls_elliptic {
             matrix_t H = Q.transpose() * Z;
             matrix_t W = Q.transpose() * O;
             matrix_t T = Z.transpose() * O;
-            matrix_t S = R.transpose().inverse();
+            matrix_t S = R.inverse().transpose();
             // Normalizing S
             for (int i = 0; i < p; i++) {S.col(i).normalize(); } //each element is normalized by the L2 norm of its column
             //Estimating The trace
@@ -959,6 +927,58 @@ struct fe_ls_elliptic {
         int r_;
         int seed_;
     };
+
+    struct XnysTrace {
+        
+        public:
+
+        Xnystrace(int r = 100, int seed = random_seed) noexcept : r_(r), seed_(seed == random_seed ? std::random_device()() : seed) {    }
+        
+        template <typename SolverType>
+        double compute_S(SolverType& solver) const {
+            fdapde_assert(solver.lambda_saved_.has_value());
+            std::mt19937 rng(seed_);
+            rademacher_distribution rademacher;
+            matrix_t O(solver.n_locs_, r_);
+            matrix_t Y(solver.n_locs_, r_);
+            for (int i = 0; i < solver.n_locs_; ++i) {
+                for (int j = 0; j < r_; ++j) { 
+                    O(i, j) = rademacher(rng);
+                }
+            }
+
+            Y = solver.apply_S(O);
+            //Numeric stabilty (as in the paper)
+            double eps = std::numeric_limits<double>::epsilon();
+            double nu = eps * Y.norm() / std::sqrt(solver.n_locs_);
+            Y += nu * O;
+            Eigen::HouseholderQR<matrix_t> qr(Y);
+            matrix_t Q = qr.householderQ() * matrix_t::Identity(solver.n_locs_, r_);
+            matrix_t R = qr.matrixQR().topRows(r_).triangularView<Eigen::Upper>();
+            matrix_t H = O.transpose() * Y;
+            Eigen::LLT<matrix_t> lltOfA((H + H.transpose())/ 2.0);
+            matrix_t C = lltOfA.matrixU();
+            // R/C  in matlab (reference paper) is equivalent to solving B*C = R for B. 
+            // B*C = R corresponds to C'*B' = R'. I solve this system for B' and transpose the result.
+            // Since C is Upper traingular, C' will be lower triangular, so I use the forward substitution
+            matrix_t B = C.transpose().triangularView<Eigen::Lower>().solve(R.transpose()).transpose();
+            Eigen::HouseholderQR<matrix_t> qr(O);
+            matrix_t QQ = qr.householderQ() * matrix_t::Identity(solver.n_locs_, r_);
+            matrix_t RR = qr.matrixQR().topRows(r_).triangularView<Eigen::Upper>();
+            matrix_t WW = QQ.transpose() * O;
+            matrix_t SS = RR.inverse().transpose();
+            for (int i = 0; i < r_; i++) {SS.col(i).normalize(); }
+            matrix_t W = Q.transpose() * O;
+            
+            return -1.0;
+        }
+
+        private:
+
+        int r_;
+        int seed_;
+    }
+    
 
     template <typename TraceEstimator = Hutch>
     double edf(const TraceEstimator& estimator = TraceEstimator()) {
