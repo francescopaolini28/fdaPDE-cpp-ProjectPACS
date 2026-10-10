@@ -108,7 +108,7 @@ class SRPDE {
         }
 
         static double rcv_criterion(const criterion_data& d) {
-            return (1.0 / d.n) * d.rss * (1.0 + 1.0 / d.n + ((d.n - d.dor) * (d.n - d.dor))) / ((1.0 + 1.0 /d.n + (d.n - d.dor))* (1.0 + 1.0 /d.n + (d.n - d.dor)));
+            return (d.rss / d.n) * (1.0 + 1.0 / d.n + ((d.n - d.dor) * (d.n - d.dor))) / ((1.0 + (1.0 / d.n) + (d.n - d.dor)) * (1.0 + (1.0 /d.n) + (d.n - d.dor)));
         }
 
         static double gfaic_criterion(const criterion_data& d) {

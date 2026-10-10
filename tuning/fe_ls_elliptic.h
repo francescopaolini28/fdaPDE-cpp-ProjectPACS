@@ -928,56 +928,164 @@ struct fe_ls_elliptic {
         int seed_;
     };
 
-    struct XnysTrace {
-        
-        public:
 
-        Xnystrace(int r = 100, int seed = random_seed) noexcept : r_(r), seed_(seed == random_seed ? std::random_device()() : seed) {    }
-        
+    struct XNysTrace {
+    public:
+        XNysTrace(int r = 100, int seed = random_seed) noexcept 
+            : r_(r), seed_(seed == random_seed ? std::random_device()() : seed) {}
+
         template <typename SolverType>
         double compute_S(SolverType& solver) const {
             fdapde_assert(solver.lambda_saved_.has_value());
             std::mt19937 rng(seed_);
             rademacher_distribution rademacher;
-            matrix_t O(solver.n_locs_, r_);
-            matrix_t Y(solver.n_locs_, r_);
-            for (int i = 0; i < solver.n_locs_; ++i) {
-                for (int j = 0; j < r_; ++j) { 
+            
+            int m = r_; 
+            int N = solver.n_locs_;
+            matrix_t O(N, m);
+            for (int i = 0; i < N; ++i) {
+                for (int j = 0; j < m; ++j) {
                     O(i, j) = rademacher(rng);
                 }
             }
 
-            Y = solver.apply_S(O);
-            //Numeric stabilty (as in the paper)
-            double eps = std::numeric_limits<double>::epsilon();
-            double nu = eps * Y.norm() / std::sqrt(solver.n_locs_);
+        
+            matrix_t Y = solver.apply_S(O);
+            double nu = std::numeric_limits<double>::epsilon() * Y.norm() / std::sqrt(double(N));
             Y += nu * O;
+
             Eigen::HouseholderQR<matrix_t> qr(Y);
-            matrix_t Q = qr.householderQ() * matrix_t::Identity(solver.n_locs_, r_);
-            matrix_t R = qr.matrixQR().topRows(r_).triangularView<Eigen::Upper>();
+            matrix_t Q = qr.householderQ() * matrix_t::Identity(N, m);
+            matrix_t R = qr.matrixQR().topRows(m).triangularView<Eigen::Upper>();
+
             matrix_t H = O.transpose() * Y;
-            Eigen::LLT<matrix_t> lltOfA((H + H.transpose())/ 2.0);
-            matrix_t C = lltOfA.matrixU();
-            // R/C  in matlab (reference paper) is equivalent to solving B*C = R for B. 
-            // B*C = R corresponds to C'*B' = R'. I solve this system for B' and transpose the result.
-            // Since C is Upper traingular, C' will be lower triangular, so I use the forward substitution
-            matrix_t B = C.transpose().triangularView<Eigen::Lower>().solve(R.transpose()).transpose();
-            Eigen::HouseholderQR<matrix_t> qr(O);
-            matrix_t QQ = qr.householderQ() * matrix_t::Identity(solver.n_locs_, r_);
-            matrix_t RR = qr.matrixQR().topRows(r_).triangularView<Eigen::Upper>();
-            matrix_t WW = QQ.transpose() * O;
-            matrix_t SS = RR.inverse().transpose();
-            for (int i = 0; i < r_; i++) {SS.col(i).normalize(); }
-            matrix_t W = Q.transpose() * O;
+            H = 0.5 * (H + H.transpose());
+            Eigen::LLT<matrix_t> llt(H);
             
-            return -1.0;
+            
+            matrix_t C = llt.matrixL().transpose(); 
+            matrix_t Cinv = C.triangularView<Eigen::Upper>().solve(matrix_t::Identity(m, m));
+            matrix_t B = R * Cinv;
+
+            
+            Eigen::HouseholderQR<matrix_t> qrO(O);
+            matrix_t QQ = qrO.householderQ() * matrix_t::Identity(N, m);
+            matrix_t RR = qrO.matrixQR().topRows(m).triangularView<Eigen::Upper>();
+            
+            matrix_t WW = QQ.transpose() * O;
+            matrix_t RRinvT = RR.triangularView<Eigen::Upper>().solve(matrix_t::Identity(m, m)).transpose();
+            
+            matrix_t SS = RRinvT;
+            for(int i = 0; i < m; ++i) {
+                SS.col(i).normalize(); 
+            }
+
+            std::vector<double> scale(m);
+            for(int i = 0; i < m; ++i) {
+                double norm_ww_i = WW.col(i).norm();
+                double d_i = SS.col(i).dot(WW.col(i)); 
+                scale[i] = (N - m + 1.0) / (N - norm_ww_i * norm_ww_i + std::pow(std::abs(d_i), 2));
+            }
+
+           
+            matrix_t W = Q.transpose() * O;
+            matrix_t Hinv = llt.solve(matrix_t::Identity(m, m)); 
+            matrix_t BCinvT = B * Cinv.transpose();
+            
+            matrix_t S_mat(m, m);
+            for(int i = 0; i < m; ++i) {
+                S_mat.col(i) = BCinvT.col(i) * (1.0 / std::sqrt(Hinv(i, i)));
+            }
+
+            double normB2 = B.squaredNorm();
+            double trace = 0.0;
+            
+            for(int i = 0; i < m; ++i) {
+                double dSW_i = S_mat.col(i).dot(W.col(i));
+                double normS2_i = S_mat.col(i).squaredNorm();
+                
+                double est_i = normB2 - normS2_i + std::pow(std::abs(dSW_i), 2) * scale[i] - nu * N;
+                trace += est_i;
+            }
+
+            return trace / m;
         }
 
-        private:
+        template <typename SolverType>
+        double compute_SS(SolverType& solver) const {
+            fdapde_assert(solver.lambda_saved_.has_value());
+            std::mt19937 rng(seed_);
+            rademacher_distribution rademacher;
+            
+            int m = r_; 
+            int N = solver.n_locs_;
+            matrix_t O(N, m);
+            for (int i = 0; i < N; ++i) {
+                for (int j = 0; j < m; ++j) {
+                    O(i, j) = rademacher(rng);
+                }
+            }
 
+            
+            matrix_t Y = solver.apply_St(solver.apply_S(O));
+            double nu = std::numeric_limits<double>::epsilon() * Y.norm() / std::sqrt(double(N));
+            Y += nu * O;
+
+            Eigen::HouseholderQR<matrix_t> qr(Y);
+            matrix_t Q = qr.householderQ() * matrix_t::Identity(N, m);
+            matrix_t R = qr.matrixQR().topRows(m).triangularView<Eigen::Upper>();
+
+            matrix_t H = O.transpose() * Y;
+            H = 0.5 * (H + H.transpose());
+            Eigen::LLT<matrix_t> llt(H);
+            matrix_t C = llt.matrixL().transpose();
+            matrix_t Cinv = C.triangularView<Eigen::Upper>().solve(matrix_t::Identity(m, m));
+            matrix_t B = R * Cinv;
+
+            Eigen::HouseholderQR<matrix_t> qrO(O);
+            matrix_t QQ = qrO.householderQ() * matrix_t::Identity(N, m);
+            matrix_t RR = qrO.matrixQR().topRows(m).triangularView<Eigen::Upper>();
+            
+            matrix_t WW = QQ.transpose() * O;
+            matrix_t RRinvT = RR.triangularView<Eigen::Upper>().solve(matrix_t::Identity(m, m)).transpose();
+            matrix_t SS = RRinvT;
+            for(int i = 0; i < m; ++i) {
+                SS.col(i).normalize();
+            }
+
+            std::vector<double> scale(m);
+            for(int i = 0; i < m; ++i) {
+                double norm_ww_i = WW.col(i).norm();
+                double d_i = SS.col(i).dot(WW.col(i)); 
+                scale[i] = (N - m + 1.0) / (N - norm_ww_i * norm_ww_i + std::pow(std::abs(d_i), 2));
+            }
+
+            matrix_t W = Q.transpose() * O;
+            matrix_t Hinv = llt.solve(matrix_t::Identity(m, m));
+            matrix_t BCinvT = B * Cinv.transpose();
+            
+            matrix_t S_mat(m, m);
+            for(int i = 0; i < m; ++i) {
+                S_mat.col(i) = BCinvT.col(i) * (1.0 / std::sqrt(Hinv(i, i)));
+            }
+
+            double normB2 = B.squaredNorm();
+            double trace = 0.0;
+            
+            for(int i = 0; i < m; ++i) {
+                double dSW_i = S_mat.col(i).dot(W.col(i));
+                double normS2_i = S_mat.col(i).squaredNorm();
+                double est_i = normB2 - normS2_i + std::pow(std::abs(dSW_i), 2) * scale[i] - nu * N;
+                trace += est_i;
+            }
+
+            return trace / m;
+        }
+
+    private:
         int r_;
         int seed_;
-    }
+    };
     
 
     template <typename TraceEstimator = Hutch>
