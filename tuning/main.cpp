@@ -40,7 +40,7 @@ struct rademacher_distribution {
     double operator()(Generator& g) { return dist(g) * 2.0 - 1.0; }
 };
 
-// Rami con covariate (n_covs_ != 0): non usati qui (n_covs_ = 0), ma i nomi devono esistere per compilare.
+// Per evitare errori di compilazione creaiamo queste funzioni "finte" (nel test in questione non è necessario avere delle covariate)
 namespace internals {
 template <typename... Args> Eigen::MatrixXd lmbQ(Args&&...) { throw std::runtime_error("lmbQ non disponibile nel mock"); }
 }
@@ -555,18 +555,20 @@ static VectorXd make_spectrum(const std::string& type, int N) {
 // ------------------------------------------------------------------------------------
 int main(int argc, char** argv) {
     const int n_trials = (argc > 1) ? std::atoi(argv[1]) : 100;   // il paper usa 1000
-    const int N        = (argc > 2) ? std::atoi(argv[2]) : 1000;
+    const int N        = (argc > 2) ? std::atoi(argv[2]) : 1000;  // matrix dimension
     const int base_seed = 159875;
 
     std::vector<int> ms;
-    for (int m = 20; m <= 300; m += 20) ms.push_back(m);
+    for (int m = 10; m <= 100; m += 10) ms.push_back(m);
 
     std::vector<std::string> types   = {"flat", "poly", "exp", "step"};
     std::vector<std::string> methods = {"Hutch", "Hutch++", "XTrace", "XNysTrace"};
 
+    // 3D matrix for storing all errors, of all methods for all types (4x4x10)
     std::vector<std::vector<std::vector<double>>> sum_err(
         types.size(), std::vector<std::vector<double>>(methods.size(), std::vector<double>(ms.size(), 0.0)));
-    auto sum_time = sum_err;
+    // same 3D matrix to store execution times
+    auto sum_time = sum_err; 
 
     std::ofstream raw("benchmark_trace_raw.csv");
     raw << "MatrixType,Method,m,Trial,Time_ms,Estimate,True_Value,RelError\n";
@@ -581,7 +583,7 @@ int main(int argc, char** argv) {
         for (size_t ti = 0; ti < types.size(); ++ti) {
             VectorXd lam = make_spectrum(types[ti], N);
             MatrixXd A = U * lam.asDiagonal() * U.transpose();
-            A = 0.5 * (A + A.transpose());
+            A = 0.5 * (A + A.transpose());  //numerical trick to make the matrix symmetric
             double true_tr = lam.sum();
 
             for (size_t mi = 0; mi < methods.size(); ++mi) {
@@ -593,6 +595,7 @@ int main(int argc, char** argv) {
                     MockSolver solver(A);
                     double est = 0.0;
 
+                    // Calculating execution time
                     auto start = high_resolution_clock::now();
                     if (mi == 0)      { MockSolver::Hutch     e(m, seed); est = e.compute_S(solver); }
                     else if (mi == 1) { MockSolver::Hutchpp   e(m, seed); est = e.compute_S(solver); }
@@ -600,9 +603,11 @@ int main(int argc, char** argv) {
                     else              { MockSolver::XNysTrace e(m, seed); est = e.compute_S(solver); }
                     auto stop = high_resolution_clock::now();
 
+                    // Evaluating relative error and time performance
                     double time_ms = duration<double, std::milli>(stop - start).count();
                     double err = std::abs(est - true_tr) / true_tr;
 
+                    // Populating 3D matrices (Both sumcof times and errors for all trials and raw csv)
                     sum_err[ti][mi][k]  += err;
                     sum_time[ti][mi][k] += time_ms;
                     raw << types[ti] << "," << methods[mi] << "," << m << "," << t << ","
@@ -614,6 +619,7 @@ int main(int argc, char** argv) {
     }
     raw.close();
 
+    // Generating the summary csv compiting means on the number of trials for every possible combination
     std::ofstream summ("benchmark_trace_summary.csv");
     summ.precision(17);
     summ << "MatrixType,Method,m,MeanRelError,MeanTime_ms,NTrials\n";

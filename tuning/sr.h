@@ -257,6 +257,132 @@ class SRPDE {
     gcv_t gcv(const typename gcv_t::edf_cache_t& edf_cache, int r, int seed) { return gcv_t(this, edf_cache, r, seed); }
 
 
+    struct gfaic_t : public ScalarFieldBase<n_lambda, computeLambda> {
+        using Base = ScalarFieldBase<1, computeLambda>;
+        static constexpr int StaticInputSize = n_lambda;
+        static constexpr int NestAsRef = 0;
+        static constexpr int XprBits = 0;
+        using Scalar = double;
+        using InputType = Vector<Scalar, StaticInputSize>;
+        using edf_cache_t = std::unordered_map<
+        std::array<double, StaticInputSize>, double, internals::std_array_hash<double, StaticInputSize>>;
+        
+        struct criterion_data {
+            double n, q, rss, edf, dor;
+        };
+
+        inline double compute_gfaic(const criterion_data& d) { return (d.rss / d.n) + std::exp(2.0 * (d.n - d.dor) / d.n); }
+
+        gfaic_t() noexcept = default;
+
+        gfaic_t(SRPDE* model) : model_(model), n_(model->n_obs()), q_(model->n_covs()), r_(100), seed_(random_seed) { }
+        gfaic_t(SRPDE* model, const edf_cache_t& edf_cache) : model_(model),  n_(model->n_obs()), q_(model->n_covs()), edf_cache_(edf_cache), r_(100), seed_(random_seed)  { }    
+        gfaic_t(SRPDE* model, const edf_cache_t& edf_cache, int r, int seed) : model_(model),  n_(model->n_obs()), q_(model->n_covs()), edf_cache_(edf_cache), r_(r)   { }
+        gfaic_t(SRPDE* model, int r, int seed) : model_(model), n_(model->n_obs()), q_(model->n_covs()), r_(r), seed_(seed) { }
+
+        template <typename InputType_>
+            requires(internals::is_subscriptable<InputType_, int>)
+        constexpr double operator()(const InputType_& lambda) {
+            return internals::apply_index_pack<n_lambda>([&]<int... Ns_>() { return operator()(lambda[Ns_]...); });
+        }
+        template <typename... LambdaT>
+            requires(std::is_convertible_v<LambdaT, double> && ...) && (sizeof...(LambdaT) == StaticInputSize)
+        constexpr double operator()(LambdaT... lambda) {
+
+            std::array<double, StaticInputSize> lambda_vec {lambda...};
+
+            model_->fit(static_cast<double>(lambda)...);
+            
+            if (edf_cache_.find(lambda_vec) == edf_cache_.end()) {   // cache Tr[S]
+                typename solver_t::Hutchpp estimator(r_, seed_);
+                edf_cache_[lambda_vec] = model_->edf(estimator);
+            }
+            
+            double rss = (model_->fitted() - model_->response()).squaredNorm();
+            double edf = edf_cache_.at(lambda_vec);
+            double dor = n_ - (q_ + edf);   // residual degrees of freedom, trace of (I - S)
+            criterion_data data{ static_cast<double>(n_), static_cast<double>(q_), rss, edf, dor };
+            return compute_gfaic(data);
+        }
+        // observers & setters
+        const edf_cache_t& edf_cache() const { return edf_cache_; }
+        edf_cache_t& edf_cache() { return edf_cache_; }
+        private:
+        SRPDE* model_;
+        int n_ = 0, q_ = 0;
+        edf_cache_t edf_cache_;
+        int r_, seed_;
+    }
+
+    gcv_t gfaic() { return gcv_t(this); }
+    gcv_t gfaic(const typename gcv_t::edf_cache_t& edf_cache) { return gcv_t(this, edf_cache); }
+    gcv_t gfaic(int r, int seed) { return gcv_t(this, r, seed); }
+    gcv_t gfaic(const typename gcv_t::edf_cache_t& edf_cache, int r, int seed) { return gcv_t(this, edf_cache, r, seed); }
+
+
+    struct improvedaic_t : public ScalarFieldBase<n_lambda, computeLambda> {
+        using Base = ScalarFieldBase<1, computeLambda>;
+        static constexpr int StaticInputSize = n_lambda;
+        static constexpr int NestAsRef = 0;
+        static constexpr int XprBits = 0;
+        using Scalar = double;
+        using InputType = Vector<Scalar, StaticInputSize>;
+        using edf_cache_t = std::unordered_map<
+        std::array<double, StaticInputSize>, double, internals::std_array_hash<double, StaticInputSize>>;
+        
+        struct criterion_data {
+            double n, q, rss, edf, dor;
+        };
+
+        inline double compute_improvedaic(const criterion_data& d) { return std::log(d.rss / d.n) + 1.0 + 2.0 * (1.0 + (d.n - d.dor)) / (d.dor - 2.0); } 
+
+        improvedaic_t() noexcept = default;
+
+        improvedaic_t(SRPDE* model) : model_(model), n_(model->n_obs()), q_(model->n_covs()), r_(100), seed_(random_seed) { }
+        improvedaic_t(SRPDE* model, const edf_cache_t& edf_cache) : model_(model),  n_(model->n_obs()), q_(model->n_covs()), edf_cache_(edf_cache), r_(100), seed_(random_seed)  { }    
+        improvedaic_t(SRPDE* model, const edf_cache_t& edf_cache, int r, int seed) : model_(model),  n_(model->n_obs()), q_(model->n_covs()), edf_cache_(edf_cache), r_(r)   { }
+        improvedaic_t(SRPDE* model, int r, int seed) : model_(model), n_(model->n_obs()), q_(model->n_covs()), r_(r), seed_(seed) { }
+
+        template <typename InputType_>
+            requires(internals::is_subscriptable<InputType_, int>)
+        constexpr double operator()(const InputType_& lambda) {
+            return internals::apply_index_pack<n_lambda>([&]<int... Ns_>() { return operator()(lambda[Ns_]...); });
+        }
+        template <typename... LambdaT>
+            requires(std::is_convertible_v<LambdaT, double> && ...) && (sizeof...(LambdaT) == StaticInputSize)
+        constexpr double operator()(LambdaT... lambda) {
+
+            std::array<double, StaticInputSize> lambda_vec {lambda...};
+
+            model_->fit(static_cast<double>(lambda)...);
+            
+            if (edf_cache_.find(lambda_vec) == edf_cache_.end()) {   // cache Tr[S]
+                typename solver_t::Hutchpp estimator(r_, seed_);
+                edf_cache_[lambda_vec] = model_->edf(estimator);
+            }
+            
+            double rss = (model_->fitted() - model_->response()).squaredNorm();
+            double edf = edf_cache_.at(lambda_vec);
+            double dor = n_ - (q_ + edf);   // residual degrees of freedom, trace of (I - S)
+            criterion_data data{ static_cast<double>(n_), static_cast<double>(q_), rss, edf, dor };
+            return compute_improvedaic(data);
+        }
+        // observers & setters
+        const edf_cache_t& edf_cache() const { return edf_cache_; }
+        edf_cache_t& edf_cache() { return edf_cache_; }
+        private:
+        SRPDE* model_;
+        int n_ = 0, q_ = 0;
+        edf_cache_t edf_cache_;
+        int r_, seed_;
+    }
+
+    gcv_t improvedaic() { return gcv_t(this); }
+    gcv_t improvedaic(const typename gcv_t::edf_cache_t& edf_cache) { return gcv_t(this, edf_cache); }
+    gcv_t improvedaic(int r, int seed) { return gcv_t(this, r, seed); }
+    gcv_t improvedaic(const typename gcv_t::edf_cache_t& edf_cache, int r, int seed) { return gcv_t(this, edf_cache, r, seed); }
+
+
     
 
 
