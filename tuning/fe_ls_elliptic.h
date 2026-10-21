@@ -130,7 +130,7 @@ struct fe_ls_elliptic {
         return SM;
     };
 
-    // S'*M, work in progress, not yet tested
+    // S'*M
     matrix_t apply_St(const matrix_t& M) {
 
         int cols = M.cols();
@@ -933,7 +933,7 @@ struct fe_ls_elliptic {
     public:
         XNysTrace(int r = 100, int seed = random_seed) noexcept 
             : r_(r), seed_(seed == random_seed ? std::random_device()() : seed) {}
-
+      
         template <typename SolverType>
         double compute_S(SolverType& solver) const {
             fdapde_assert(solver.lambda_saved_.has_value());
@@ -1086,7 +1086,6 @@ struct fe_ls_elliptic {
         int r_;
         int seed_;
     };
-    
 
     template <typename TraceEstimator = Hutch>
     double edf(const TraceEstimator& estimator = TraceEstimator()) {

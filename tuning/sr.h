@@ -84,6 +84,184 @@ class SRPDE {
         return fitted_;
     }
 
+
+    void compute_sigmaHat () {
+            fdapde_assert(lambda_grid_.size() > 0);
+            double best_lam = lambda_grid_[0];
+            double best_rss = std::numeric_limits<double>::max();
+            double min_gcv = std::numeric_limits<double>::max();
+            for (double lam : lambda_grid_) {
+                model_->fit(lam);                
+                std::array<double, StaticInputSize> lam_vec{lam};
+                double edf;
+                if (edf_cache_.find(lam_vec) == edf_cache_.end()) {
+                    typename solver_t::Hutchpp estimator(r_, seed_);
+                    edf = model_->edf(estimator);
+                    edf_cache_[lam_vec] = edf;
+                } else {
+                    edf = edf_cache_.at(lam_vec);
+                }
+                double rss = (model_->fitted() - model_->response()).squaredNorm();
+                double dor = n_ - (q_ + edf);
+                // gcv is the criterion chosen to select lambda_pilot
+                double gcv = (n_ / (dor * dor)) * rss;
+                if (gcv < min_gcv) {
+                    min_gcv = gcv;
+                    best_lam = lam;
+                    best_rss = rss;
+                }
+            }
+            model_->fit(best_lam);
+            std::array<double, StaticInputSize> best_lam_vec{best_lam};
+            double traceSS;
+            double traceS = edf_cache_.at(best_lam_vec);
+            if (criterion_function_ == &pse_criterion) {
+                if (edf_SS_cache_.find(best_lam_vec) == edf_SS_cache_.end()) {
+                    typename solver_t::Hutchpp estimator_pp(r_, seed_);
+                    traceSS = model_->edf_SS(estimator_pp);
+                    edf_SS_cache_[best_lam_vec] = traceSS;
+                } else {
+                    traceSS = edf_SS_cache_.at(best_lam_vec);
+                }
+                sigma2_hat_ = best_rss / (n_ - q_ - 2*traceS + traceSS);
+            } else {
+                sigma2_hat_ = best_rss / (n_ - traceS - q_);
+            }
+    }
+
+    struct gcv_t : public ScalarFieldBase<n_lambda, computeLambda> {
+        using Base = ScalarFieldBase<1, computeLambda>;
+        static constexpr int StaticInputSize = n_lambda;
+        static constexpr int NestAsRef = 0;
+        static constexpr int XprBits = 0;
+        using Scalar = double;
+        using InputType = Vector<Scalar, StaticInputSize>;
+        using edf_cache_t = std::unordered_map<
+        std::array<double, StaticInputSize>, double, internals::std_array_hash<double, StaticInputSize>>;
+        
+        struct criterion_data {
+            double n, q, rss, edf, dor;
+        };
+
+        inline double compute_gcv(const criterion_data& d) { return (d.n / (d.dor * d.dor)) * d.rss; }
+
+
+        gcv_t() noexcept = default;
+
+        gcv_t(SRPDE* model) : model_(model), n_(model->n_obs()), q_(model->n_covs()), r_(100), seed_(random_seed) { }
+        gcv_t(SRPDE* model, const edf_cache_t& edf_cache) : model_(model),  n_(model->n_obs()), q_(model->n_covs()), edf_cache_(edf_cache), r_(100), seed_(random_seed)  { }    
+        gcv_t(SRPDE* model, const edf_cache_t& edf_cache, int r, int seed) : model_(model),  n_(model->n_obs()), q_(model->n_covs()), edf_cache_(edf_cache), r_(r)   { }
+        gcv_t(SRPDE* model, int r, int seed) : model_(model), n_(model->n_obs()), q_(model->n_covs()), r_(r), seed_(seed) { }
+
+        template <typename InputType_>
+            requires(internals::is_subscriptable<InputType_, int>)
+        constexpr double operator()(const InputType_& lambda) {
+            return internals::apply_index_pack<n_lambda>([&]<int... Ns_>() { return operator()(lambda[Ns_]...); });
+        }
+        template <typename... LambdaT>
+            requires(std::is_convertible_v<LambdaT, double> && ...) && (sizeof...(LambdaT) == StaticInputSize)
+        constexpr double operator()(LambdaT... lambda) {
+
+            std::array<double, StaticInputSize> lambda_vec {lambda...};
+
+            model_->fit(static_cast<double>(lambda)...);
+            
+            if (edf_cache_.find(lambda_vec) == edf_cache_.end()) {   // cache Tr[S]
+                typename solver_t::Hutchpp estimator(r_, seed_);
+                edf_cache_[lambda_vec] = model_->edf(estimator);
+            }
+            
+            double rss = (model_->fitted() - model_->response()).squaredNorm();
+            double edf = edf_cache_.at(lambda_vec);
+            double dor = n_ - (q_ + edf);   // residual degrees of freedom, trace of (I - S)
+            criterion_data data{ static_cast<double>(n_), static_cast<double>(q_), rss, edf, dor };
+            return compute_gcv(data);
+        }
+        // observers & setters
+        const edf_cache_t& edf_cache() const { return edf_cache_; }
+        edf_cache_t& edf_cache() { return edf_cache_; }
+        private:
+        SRPDE* model_;
+        int n_ = 0, q_ = 0;
+        edf_cache_t edf_cache_;
+        int r_, seed_;
+    }
+
+    gcv_t gcv() { return gcv_t(this); }
+    gcv_t gcv(const typename gcv_t::edf_cache_t& edf_cache) { return gcv_t(this, edf_cache); }
+    gcv_t gcv(int r, int seed) { return gcv_t(this, r, seed); }
+    gcv_t gcv(const typename gcv_t::edf_cache_t& edf_cache, int r, int seed) { return gcv_t(this, edf_cache, r, seed); }
+
+    
+    struct gcv_t : public ScalarFieldBase<n_lambda, computeLambda> {
+        using Base = ScalarFieldBase<1, computeLambda>;
+        static constexpr int StaticInputSize = n_lambda;
+        static constexpr int NestAsRef = 0;
+        static constexpr int XprBits = 0;
+        using Scalar = double;
+        using InputType = Vector<Scalar, StaticInputSize>;
+        using edf_cache_t = std::unordered_map<
+        std::array<double, StaticInputSize>, double, internals::std_array_hash<double, StaticInputSize>>;
+        
+        struct criterion_data {
+            double n, q, rss, edf, dor;
+        };
+
+        inline double compute_gcv(const criterion_data& d) { return (d.n / (d.dor * d.dor)) * d.rss; }
+
+
+        gcv_t() noexcept = default;
+
+        gcv_t(SRPDE* model) : model_(model), n_(model->n_obs()), q_(model->n_covs()), r_(100), seed_(random_seed) { }
+        gcv_t(SRPDE* model, const edf_cache_t& edf_cache) : model_(model),  n_(model->n_obs()), q_(model->n_covs()), edf_cache_(edf_cache), r_(100), seed_(random_seed)  { }    
+        gcv_t(SRPDE* model, const edf_cache_t& edf_cache, int r, int seed) : model_(model),  n_(model->n_obs()), q_(model->n_covs()), edf_cache_(edf_cache), r_(r)   { }
+        gcv_t(SRPDE* model, int r, int seed) : model_(model), n_(model->n_obs()), q_(model->n_covs()), r_(r), seed_(seed) { }
+
+        template <typename InputType_>
+            requires(internals::is_subscriptable<InputType_, int>)
+        constexpr double operator()(const InputType_& lambda) {
+            return internals::apply_index_pack<n_lambda>([&]<int... Ns_>() { return operator()(lambda[Ns_]...); });
+        }
+        template <typename... LambdaT>
+            requires(std::is_convertible_v<LambdaT, double> && ...) && (sizeof...(LambdaT) == StaticInputSize)
+        constexpr double operator()(LambdaT... lambda) {
+
+            std::array<double, StaticInputSize> lambda_vec {lambda...};
+
+            model_->fit(static_cast<double>(lambda)...);
+            
+            if (edf_cache_.find(lambda_vec) == edf_cache_.end()) {   // cache Tr[S]
+                typename solver_t::Hutchpp estimator(r_, seed_);
+                edf_cache_[lambda_vec] = model_->edf(estimator);
+            }
+            
+            double rss = (model_->fitted() - model_->response()).squaredNorm();
+            double edf = edf_cache_.at(lambda_vec);
+            double dor = n_ - (q_ + edf);   // residual degrees of freedom, trace of (I - S)
+            criterion_data data{ static_cast<double>(n_), static_cast<double>(q_), rss, edf, dor };
+            return compute_gcv(data);
+        }
+        // observers & setters
+        const edf_cache_t& edf_cache() const { return edf_cache_; }
+        edf_cache_t& edf_cache() { return edf_cache_; }
+        private:
+        SRPDE* model_;
+        int n_ = 0, q_ = 0;
+        edf_cache_t edf_cache_;
+        int r_, seed_;
+    }
+
+    gcv_t gcv() { return gcv_t(this); }
+    gcv_t gcv(const typename gcv_t::edf_cache_t& edf_cache) { return gcv_t(this, edf_cache); }
+    gcv_t gcv(int r, int seed) { return gcv_t(this, r, seed); }
+    gcv_t gcv(const typename gcv_t::edf_cache_t& edf_cache, int r, int seed) { return gcv_t(this, edf_cache, r, seed); }
+
+
+    
+
+
+
+
     // Indexes to compute the optimal penalization term lambda
     struct computeLambda : public ScalarFieldBase<n_lambda, computeLambda> {
         using Base = ScalarFieldBase<1, computeLambda>;
@@ -93,7 +271,7 @@ class SRPDE {
         using Scalar = double;
         using InputType = Vector<Scalar, StaticInputSize>;
         using edf_cache_t = std::unordered_map<
-          std::array<double, StaticInputSize>, double, internals::std_array_hash<double, StaticInputSize>>;
+        std::array<double, StaticInputSize>, double, internals::std_array_hash<double, StaticInputSize>>;
 
         //Struct containing the data passed to a criterion
         struct criterion_data {
@@ -101,7 +279,7 @@ class SRPDE {
         };
 
         //Function pointer type
-        using criterion_function = double (*)(const criterion_data& data);
+        // using criterion_function = double (*)(const criterion_data& data);
         
         static double gcv_criterion(const criterion_data& d) {
             return (d.n / (d.dor * d.dor)) * d.rss;
@@ -126,7 +304,7 @@ class SRPDE {
         static double pse_criterion(const criterion_data& d){
             return d.sigma2_hat * (1.0 + (d.q + d.edf_SS)/d.n) + d.rss/d.n; 
         }
-
+        /*
         void compute_sigmaHat () {
             fdapde_assert(lambda_grid_.size() > 0);
             double best_lam = lambda_grid_[0];
@@ -137,7 +315,7 @@ class SRPDE {
                 std::array<double, StaticInputSize> lam_vec{lam};
                 double edf;
                 if (edf_cache_.find(lam_vec) == edf_cache_.end()) {
-                    typename solver_t::Hutch estimator(r_, seed_);
+                    typename solver_t::Hutchpp estimator(r_, seed_);
                     edf = model_->edf(estimator);
                     edf_cache_[lam_vec] = edf;
                 } else {
@@ -170,7 +348,7 @@ class SRPDE {
                 sigma2_hat_ = best_rss / (n_ - traceS - q_);
             }
         }
-
+            */
         //Constructors
         computeLambda() noexcept = default;
 
@@ -252,7 +430,7 @@ class SRPDE {
             model_->fit(static_cast<double>(lambda)...);
             
             if (edf_cache_.find(lambda_vec) == edf_cache_.end()) {   // cache Tr[S]
-                typename solver_t::Hutch estimator(r_, seed_);
+                typename solver_t::Hutchpp estimator(r_, seed_);
                 edf_cache_[lambda_vec] = model_->edf(estimator);
             }
             double edf_SS = 0.0;
@@ -288,8 +466,8 @@ class SRPDE {
         edf_cache_t& edf_cache() { return edf_cache_; }
         const edf_cache_t& edf_SS_cache() const { return edf_SS_cache_; }
         edf_cache_t& edf_SS_cache() { return edf_SS_cache_; }
-     
-       private:
+    
+        private:
         SRPDE* model_;
         int n_ = 0, q_ = 0;
         edf_cache_t edf_cache_;
@@ -302,12 +480,7 @@ class SRPDE {
         std::vector<double> lambda_grid_;
         std::optional<double> sigma2_hat_ = std::nullopt;
     };
-    //gcv
-    computeLambda gcv() { return computeLambda(this, &computeLambda::gcv_criterion); }
-    computeLambda gcv(const typename computeLambda::edf_cache_t& edf_cache) { return computeLambda(this, edf_cache, &computeLambda::gcv_criterion); }
-    computeLambda gcv(int r, int seed) { return computeLambda(this, r, seed, &computeLambda::gcv_criterion); }
-    computeLambda gcv(const typename computeLambda::edf_cache_t& edf_cache, int r, int seed) { return computeLambda(this, edf_cache, r, seed, &computeLambda::gcv_criterion); }
-    //rcv
+   //rcv
     computeLambda rcv() { return computeLambda(this, &computeLambda::rcv_criterion); }
     computeLambda rcv(const typename computeLambda::edf_cache_t& edf_cache) { return computeLambda(this, edf_cache, &computeLambda::rcv_criterion); }
     computeLambda rcv(int r, int seed) { return computeLambda(this, r, seed, &computeLambda::rcv_criterion); }
