@@ -192,8 +192,8 @@ class SRPDE {
     gcv_t gcv(int r, int seed) { return gcv_t(this, r, seed); }
     gcv_t gcv(const typename gcv_t::edf_cache_t& edf_cache, int r, int seed) { return gcv_t(this, edf_cache, r, seed); }
 
-    
-    struct gcv_t : public ScalarFieldBase<n_lambda, computeLambda> {
+
+    struct rcv_t : public ScalarFieldBase<n_lambda, computeLambda> {
         using Base = ScalarFieldBase<1, computeLambda>;
         static constexpr int StaticInputSize = n_lambda;
         static constexpr int NestAsRef = 0;
@@ -207,15 +207,15 @@ class SRPDE {
             double n, q, rss, edf, dor;
         };
 
-        inline double compute_gcv(const criterion_data& d) { return (d.n / (d.dor * d.dor)) * d.rss; }
+        inline double compute_rcv(const criterion_data& d) { return (d.rss / d.n) * (1.0 + 1.0 / d.n + ((d.n - d.dor) * (d.n - d.dor))) / ((1.0 + (1.0 / d.n) + (d.n - d.dor)) * (1.0 + (1.0 /d.n) + (d.n - d.dor))); }
 
 
-        gcv_t() noexcept = default;
+        rcv_t() noexcept = default;
 
-        gcv_t(SRPDE* model) : model_(model), n_(model->n_obs()), q_(model->n_covs()), r_(100), seed_(random_seed) { }
-        gcv_t(SRPDE* model, const edf_cache_t& edf_cache) : model_(model),  n_(model->n_obs()), q_(model->n_covs()), edf_cache_(edf_cache), r_(100), seed_(random_seed)  { }    
-        gcv_t(SRPDE* model, const edf_cache_t& edf_cache, int r, int seed) : model_(model),  n_(model->n_obs()), q_(model->n_covs()), edf_cache_(edf_cache), r_(r)   { }
-        gcv_t(SRPDE* model, int r, int seed) : model_(model), n_(model->n_obs()), q_(model->n_covs()), r_(r), seed_(seed) { }
+        rcv_t(SRPDE* model) : model_(model), n_(model->n_obs()), q_(model->n_covs()), r_(100), seed_(random_seed) { }
+        rcv_t(SRPDE* model, const edf_cache_t& edf_cache) : model_(model),  n_(model->n_obs()), q_(model->n_covs()), edf_cache_(edf_cache), r_(100), seed_(random_seed)  { }    
+        rcv_t(SRPDE* model, const edf_cache_t& edf_cache, int r, int seed) : model_(model),  n_(model->n_obs()), q_(model->n_covs()), edf_cache_(edf_cache), r_(r)   { }
+        rcv_t(SRPDE* model, int r, int seed) : model_(model), n_(model->n_obs()), q_(model->n_covs()), r_(r), seed_(seed) { }
 
         template <typename InputType_>
             requires(internals::is_subscriptable<InputType_, int>)
@@ -239,7 +239,7 @@ class SRPDE {
             double edf = edf_cache_.at(lambda_vec);
             double dor = n_ - (q_ + edf);   // residual degrees of freedom, trace of (I - S)
             criterion_data data{ static_cast<double>(n_), static_cast<double>(q_), rss, edf, dor };
-            return compute_gcv(data);
+            return compute_rcv(data);
         }
         // observers & setters
         const edf_cache_t& edf_cache() const { return edf_cache_; }
@@ -251,10 +251,10 @@ class SRPDE {
         int r_, seed_;
     }
 
-    gcv_t gcv() { return gcv_t(this); }
-    gcv_t gcv(const typename gcv_t::edf_cache_t& edf_cache) { return gcv_t(this, edf_cache); }
-    gcv_t gcv(int r, int seed) { return gcv_t(this, r, seed); }
-    gcv_t gcv(const typename gcv_t::edf_cache_t& edf_cache, int r, int seed) { return gcv_t(this, edf_cache, r, seed); }
+    rcv_t rcv() { return rcv_t(this); }
+    rcv_t rcv(const typename rcv_t::edf_cache_t& edf_cache) { return rcv_t(this, edf_cache); }
+    rcv_t rcv(int r, int seed) { return rcv_t(this, r, seed); }
+    rcv_t rcv(const typename rcv_t::edf_cache_t& edf_cache, int r, int seed) { return rcv_t(this, edf_cache, r, seed); }
 
 
     struct gfaic_t : public ScalarFieldBase<n_lambda, computeLambda> {
