@@ -24,7 +24,13 @@ namespace internals {
 
 // solves \min_{f, \beta} \| W^{1/2} * (y_i - x_i^\top * \beta - f(p_i)) \|_2^2 + \int_D (Lf - u)^2, L elliptic operator
 struct fe_ls_elliptic {
-   private:
+   
+    friend class Hutch;
+    friend class Hutchpp;
+    friend class Xtrace;
+
+
+    private:
     using vector_t = Eigen::Matrix<double, Dynamic, 1>;
     using matrix_t = Eigen::Matrix<double, Dynamic, Dynamic>;
     using binary_t = BinaryMatrix<Dynamic, Dynamic>;
