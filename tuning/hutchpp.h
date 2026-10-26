@@ -23,7 +23,7 @@
 namespace fdapde {
 namespace internals {
 
-// STochastic trace estimation bu Hutchinson method, as described in:
+// Stochastic trace estimation by Hutchinson method, as described in:
 // M. F. Hutchinson (1989) A stochastic estimator of the trace of the influence matrix for laplacian smoothing splines
 
 template <typename MatrixType>
