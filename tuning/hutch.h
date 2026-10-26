@@ -28,16 +28,17 @@ namespace internals {
 
 template <MatrixType>
 class Hutch {
-    using matrix_t = Eigen::Matrix<double, Dynamic, Dynamic>;
+    
     using vector_t = Eigen::Matrix<double, Dynamic, 1>;
     
     public:
 
-    Hutch(int r = 100, int seed = random_seed) noexcept : r_(r), seed_(seed == random_seed ? std::random_device()() : seed) {    }
+    Hutch() noexcept = default;
+    Hutch(int n, int r = 100, int seed = random_seed) noexcept : n_(n), r_(r), seed_(seed == random_seed ? std::random_device()() : seed) {    }
 
     template <typename SolverType>
     double compute_S(SolverType& solver) const {
-        fdapde_assert(solver.lambda_saved_.has_value());
+        //fdapde_assert(solver.lambda_saved_.has_value());
         if (!solver.Ys_.has_value() || !solver.Bs_.has_value()) {
             std::mt19937 rng(seed_);
             rademacher_distribution rademacher;

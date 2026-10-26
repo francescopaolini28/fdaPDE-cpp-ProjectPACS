@@ -25,11 +25,6 @@ namespace internals {
 // solves \min_{f, \beta} \| W^{1/2} * (y_i - x_i^\top * \beta - f(p_i)) \|_2^2 + \int_D (Lf - u)^2, L elliptic operator
 struct fe_ls_elliptic {
    
-    friend class Hutch;
-    friend class Hutchpp;
-    friend class Xtrace;
-
-
     private:
     using vector_t = Eigen::Matrix<double, Dynamic, 1>;
     using matrix_t = Eigen::Matrix<double, Dynamic, Dynamic>;
@@ -678,7 +673,7 @@ struct fe_ls_elliptic {
     const matrix_t& U() const { return U_; }
     const matrix_t& V() const { return V_; }
 
-
+    /*
     struct Hutch {
         public:
 
@@ -1092,6 +1087,8 @@ struct fe_ls_elliptic {
         int r_;
         int seed_;
     };
+
+    */
 
     template <typename TraceEstimator = Hutch>
     double edf(const TraceEstimator& estimator = TraceEstimator()) {
