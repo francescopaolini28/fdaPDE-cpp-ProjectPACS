@@ -19,6 +19,7 @@
 
 #include <random>
 #include <Eigen/Dense>
+#include "./fdaPDE/src/models/header_check.h"
 
 namespace fdapde {
 namespace internals {
@@ -26,7 +27,7 @@ namespace internals {
 // STochastic trace estimation bu Hutchinson method, as described in:
 // M. F. Hutchinson (1989) A stochastic estimator of the trace of the influence matrix for laplacian smoothing splines
 
-template <MatrixType>
+template <typename MatrixType>
 class Hutch {
     
     using vector_t = Eigen::Matrix<double, Dynamic, 1>;
@@ -72,48 +73,44 @@ class Hutch {
 
 
     template <typename SolverType>
-    double compute_SS(SolverType& solver) const {
+    void compute_SS(SolverType& solver) const {
         
-        fdapde_assert(solver.lambda_saved_.has_value());
-        if (!solver.Bs_.has_value()) {
-            std::mt19937 rng(seed_);
-            rademacher_distribution rademacher;
-            solver.Us_ = matrix_t(solver.n_locs_, r_);
-            for (int i = 0; i < solver.n_locs_; ++i) {
-                for (int j = 0; j < r_; ++j) { solver.Us_->operator()(i, j) = rademacher(rng); }
-            }
-            // Bs_ = Us_ projected onto the mesh space
-            solver.Bs_ = matrix_t::Zero(2 * solver.n_dofs_, r_);
+        //fdapde_assert(solver.lambda_saved_.has_value());
+        //if (!solver.Bs_.has_value()) {
+        std::mt19937 rng(seed_);
+        rademacher_distribution rademacher;
+        MatrixType Us_(n_, r_);
+        for (int i = 0; i < n_; ++i) {
+            for (int j = 0; j < r_; ++j) { Us_(i, j) = rademacher(rng); }
         }
+        // Bs_ = Us_ projected onto the mesh space
+        //solver.Bs_ = matrix_t::Zero(2 * solver.n_dofs_, r_);
+        //}
             
         // Populating Bs_ (D_ and W_ take account for the weigths given to data and areal data. To be checked)
-        if (solver.n_covs_ == 0) {
-            solver.Bs_->topRows(solver.n_dofs_) = -solver.PsiNA().transpose() * solver.D_ * solver.W_ * (*solver.Us_);
-        } else {
-            solver.Bs_->topRows(solver.n_dofs_) = -solver.PsiNA().transpose() * solver.D_ * internals::lmbQ(solver.W_, solver.X_, solver.invXtWX_, *solver.Us_);
-        }
+        //if (solver.n_covs_ == 0) {
+        //    solver.Bs_->topRows(solver.n_dofs_) = -solver.PsiNA().transpose() * solver.D_ * solver.W_ * (*solver.Us_);
+        //} else {
+        //    solver.Bs_->topRows(solver.n_dofs_) = -solver.PsiNA().transpose() * solver.D_ * internals::lmbQ(solver.W_, solver.X_, solver.invXtWX_, *solver.Us_);
+        //}
         // enforce Dirichlet BCs, if any
-        for (size_t i = 0; i < solver.dirichlet_dofs_.size(); ++i) {
-            solver.Bs_->row(solver.dirichlet_dofs_[i]).setConstant(solver.dirichlet_vals_[i]);
-        }
+        //for (size_t i = 0; i < solver.dirichlet_dofs_.size(); ++i) {
+        //    solver.Bs_->row(solver.dirichlet_dofs_[i]).setConstant(solver.dirichlet_vals_[i]);
+        //}
         // Solving for f_sim (stored in matrix x)
-        matrix_t x = solver.n_covs_ == 0 ? solver.invA_.solve(*solver.Bs_) : woodbury_system_solve(solver.invA_, solver.U_, solver.XtWX_, solver.V_, *solver.Bs_);
-            
-        double trStS = 0.0;
-        for (int i = 0; i < r_; ++i) {
-            vector_t f_sim = x.col(i).head(solver.n_dofs_);
-            if (solver.n_covs_ == 0) {
-                // y_hat = S * u_i = Psi_ * f_sim 
-                vector_t y_hat = solver.Psi_ * f_sim;
-                trStS += y_hat.squaredNorm();
-            } else {
-                vector_t beta_sim = solver.invXtWXXtW_ * (solver.Us_->col(i) - solver.Psi_ * f_sim);
-                vector_t y_hat = solver.Psi_ * f_sim + solver.X_ * beta_sim;
-                trStS += y_hat.squaredNorm();
-            }
+        //matrix_t x = solver.n_covs_ == 0 ? solver.invA_.solve(*solver.Bs_) : woodbury_system_solve(solver.invA_, solver.U_, solver.XtWX_, solver.V_, *solver.Bs_);
+        double tr_SS = 0.0;
+        MatrixType SU = solver.apply_S(Us_);
+        for (int j = 0; j < r_; ++j) {
+            tr_SS += SU.col(j).squaredNorm();
         }
-        return trStS / r_;
+        SStrace_est_ = tr_SS / r_;
+
+        return;
     }
+
+    double S_trace()  const { return Strace_est_; }
+    double SS_trace() const { return SStrace_est_; }
 
 
     private:
@@ -123,6 +120,9 @@ class Hutch {
 
     mutable double Strace_est_ = 0.0;
     mutable double SStrace_est_ = 0.0;
+
+};
+
 
 
 

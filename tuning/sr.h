@@ -64,11 +64,11 @@ class SRPDE {
     int n_obs() const { return n_obs_; }
 
 
-    template <typename TraceEstimator = typename solver_t::Hutch>
+    template <typename TraceEstimator = internals::Hutch<matrix_t>>
     double edf(const TraceEstimator& estimator = TraceEstimator()) { 
         return solver_.edf(estimator); 
     }
-    template <typename TraceEstimator = typename solver_t::Hutch>
+    template <typename TraceEstimator = internals::Hutch<matrix_t>>
     double edf_SS(const TraceEstimator& estimator = TraceEstimator()) { 
         return solver_.edf_SS(estimator); 
     }
@@ -122,7 +122,7 @@ class SRPDE {
             model_->fit(static_cast<double>(lambda)...);
             
             if (edf_cache_.find(lambda_vec) == edf_cache_.end()) {   // cache Tr[S]
-                typename solver_t::Hutchpp estimator(r_, seed_);
+                internals::Hutchpp<matrix_t> estimator(n_, r_, seed_);
                 edf_cache_[lambda_vec] = model_->edf(estimator);
             }
             
@@ -186,7 +186,7 @@ class SRPDE {
             model_->fit(static_cast<double>(lambda)...);
             
             if (edf_cache_.find(lambda_vec) == edf_cache_.end()) {   // cache Tr[S]
-                typename solver_t::Hutchpp estimator(r_, seed_);
+                internals::Hutchpp<matrix_t> estimator(n_, r_, seed_);
                 edf_cache_[lambda_vec] = model_->edf(estimator);
             }
             
@@ -249,7 +249,7 @@ class SRPDE {
             model_->fit(static_cast<double>(lambda)...);
             
             if (edf_cache_.find(lambda_vec) == edf_cache_.end()) {   // cache Tr[S]
-                typename solver_t::Hutchpp estimator(r_, seed_);
+                internals::Hutchpp<matrix_t> estimator(n_, r_, seed_);
                 edf_cache_[lambda_vec] = model_->edf(estimator);
             }
             
@@ -312,7 +312,7 @@ class SRPDE {
             model_->fit(static_cast<double>(lambda)...);
             
             if (edf_cache_.find(lambda_vec) == edf_cache_.end()) {   // cache Tr[S]
-                typename solver_t::Hutchpp estimator(r_, seed_);
+                internals::Hutchpp<matrix_t> estimator(n_, r_, seed_);
                 edf_cache_[lambda_vec] = model_->edf(estimator);
             }
             
@@ -364,7 +364,7 @@ class SRPDE {
                 std::array<double, StaticInputSize> lam_vec{lam};
                 double edf;
                 if (edf_cache_.find(lam_vec) == edf_cache_.end()) {
-                    typename solver_t::Hutchpp estimator(r_, seed_);
+                    internals::Hutchpp<matrix_t> estimator(n_, r_, seed_);
                     edf = model_->edf(estimator);
                     edf_cache_[lam_vec] = edf;
                 } else {
@@ -406,7 +406,7 @@ class SRPDE {
             if(!sigma2_hat_.has_value()) { this->compute_sigmaHat(); }
             model_->fit(static_cast<double>(lambda)...);   
             if (edf_cache_.find(lambda_vec) == edf_cache_.end()) {   // cache Tr[S]
-                typename solver_t::Hutchpp estimator(r_, seed_);
+                internals::Hutchpp<matrix_t> estimator(n_, r_, seed_);
                 edf_cache_[lambda_vec] = model_->edf(estimator);
             }
             double rss = (model_->fitted() - model_->response()).squaredNorm();
@@ -465,7 +465,7 @@ class SRPDE {
                 std::array<double, StaticInputSize> lam_vec{lam};
                 double edf;
                 if (edf_cache_.find(lam_vec) == edf_cache_.end()) {
-                    typename solver_t::Hutchpp estimator(r_, seed_);
+                    internals::Hutchpp<matrix_t> estimator(n_, r_, seed_);
                     edf = model_->edf(estimator);
                     edf_cache_[lam_vec] = edf;
                 } else {
@@ -487,8 +487,8 @@ class SRPDE {
             double traceS = edf_cache_.at(best_lam_vec);
             
             if (edf_SS_cache_.find(best_lam_vec) == edf_SS_cache_.end()) {
-                typename solver_t::Hutchpp estimator_pp(r_, seed_);
-                traceSS = model_->edf_SS(estimator_pp);
+                internals::Hutchpp<matrix_t> estimator(n_, r_, seed_);
+                traceSS = model_->edf_SS(estimator);
                 edf_SS_cache_[best_lam_vec] = traceSS;
             } else {
                 traceSS = edf_SS_cache_.at(best_lam_vec);
@@ -523,13 +523,13 @@ class SRPDE {
 
             model_->fit(static_cast<double>(lambda)...);
             if (edf_cache_.find(lambda_vec) == edf_cache_.end()) {   // cache Tr[S]
-                typename solver_t::Hutchpp estimator(r_, seed_);
+                internals::Hutchpp<matrix_t> estimator(n_, r_, seed_);
                 edf_cache_[lambda_vec] = model_->edf(estimator);
             }
             double edf_SS = 0.0;
             if (edf_SS_cache_.find(lambda_vec) == edf_SS_cache_.end()) {   // cache Tr[S]
-                typename solver_t::Hutchpp estimator_pp(r_, seed_);
-                edf_SS_cache_[lambda_vec] = model_->edf_SS(estimator_pp);
+                internals::Hutchpp<matrix_t> estimator(n_, r_, seed_);
+                edf_SS_cache_[lambda_vec] = model_->edf_SS(estimator);
             }
             edf_SS = edf_SS_cache_.at(lambda_vec);  
     

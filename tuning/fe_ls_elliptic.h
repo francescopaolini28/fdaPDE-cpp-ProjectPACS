@@ -18,6 +18,9 @@
 #define __FE_LS_ELLIPTIC_SOLVER_H__
 
 #include "./fdaPDE/src/models/header_check.h"
+#include "hutch.h"
+#include "hutchpp.h"
+#include "xtrace.h"
 
 namespace fdapde {
 namespace internals {
@@ -100,6 +103,9 @@ struct fe_ls_elliptic {
     }
 
 
+    public:
+
+
     //apply S*M
     matrix_t apply_S(const matrix_t& M) {
 
@@ -161,8 +167,6 @@ struct fe_ls_elliptic {
         }
         return SM;
     }
-
-   public:
 
     static constexpr int n_lambda = 1;
     using solver_category = ls_solver;
@@ -621,7 +625,7 @@ struct fe_ls_elliptic {
             invA_.compute(A);
             lambda_saved_ = lambda_;
         }
-        Hutch estimator(r, seed);
+        Hutch<matrix_t> estimator(n_locs_, r, seed);
         return edf(estimator);
     }
     // penalty matrix: \lambda * R1^\top * (R0)^{-1} * R1
@@ -1090,13 +1094,16 @@ struct fe_ls_elliptic {
 
     */
 
-    template <typename TraceEstimator = Hutch>
+    template <typename TraceEstimator = Hutch<matrix_t>>
     double edf(const TraceEstimator& estimator = TraceEstimator()) {
-        return estimator.compute_S(*this); 
+        estimator.compute_S(*this);
+        return estimator.S_trace();
     }
-    template <typename TraceEstimator = Hutch>
+
+    template <typename TraceEstimator = Hutch<matrix_t>>
     double edf_SS(const TraceEstimator& estimator = TraceEstimator()) {
-        return estimator.compute_SS(*this); 
+        estimator.compute_SS(*this);
+        return estimator.SS_trace();
     }
 
    protected:

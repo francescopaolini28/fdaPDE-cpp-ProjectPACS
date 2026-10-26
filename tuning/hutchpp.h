@@ -19,6 +19,7 @@
 
 #include <random>
 #include <Eigen/Dense>
+#include "./fdaPDE/src/models/header_check.h"
 
 namespace fdapde {
 namespace internals {
@@ -94,7 +95,7 @@ class Hutchpp {
         double tr_QSSQ = SQ.squaredNorm();
         // (I - QQ')G 
         MatrixType G_p = G - Q * (Q.transpose() * G);
-        MatrixType SG_p = solver.apply_S(G_p);
+        MatrixType SG_p = solver.apply_St(G_p);
         double tr_GpSSGp = SG_p.squaredNorm();
         SStrace_est_ =  tr_QSSQ + (tr_GpSSGp / p); 
         return;

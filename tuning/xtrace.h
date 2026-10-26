@@ -55,7 +55,7 @@ class Xtrace{
         Y = solver.apply_S(O);
         Eigen::HouseholderQR<MatrixType> qr(Y);
         MatrixType Q = qr.householderQ() * MatrixType::Identity(n_, p);
-        MatrixType R = qr.matrixQR().topRows(p).triangularView<Eigen::Upper>();
+        MatrixType R = qr.matrixQR().topRows(p).template triangularView<Eigen::Upper>();
         MatrixType Z = solver.apply_S(Q);
         MatrixType H = Q.transpose() * Z;
         MatrixType W = Q.transpose() * O;
@@ -97,7 +97,7 @@ class Xtrace{
         Y = solver.apply_St(solver.apply_S(O));
         Eigen::HouseholderQR<MatrixType> qr(Y);
         MatrixType Q = qr.householderQ() * MatrixType::Identity(n_, p);
-        MatrixType R = qr.matrixQR().topRows(p).triangularView<Eigen::Upper>();
+        MatrixType R = qr.matrixQR().topRows(p).template triangularView<Eigen::Upper>();
         MatrixType Z = solver.apply_St(solver.apply_S(Q));
         MatrixType H = Q.transpose() * Z;
         MatrixType W = Q.transpose() * O;
@@ -135,12 +135,12 @@ class Xtrace{
 
 
 template <typename MatrixType>
-class XNystrace{
+class XNysTrace{
     
     public:
 
-    XNystrace() noexcept = default;
-    XNystrace(int n, int r = 100, int seed = random_seed) noexcept : n_(n), r_(r), seed_(seed == random_seed ? std::random_device()() : seed) {    }
+    XNysTrace() noexcept = default;
+    XNysTrace(int n, int r = 100, int seed = random_seed) noexcept : n_(n), r_(r), seed_(seed == random_seed ? std::random_device()() : seed) {    }
 
     template <typename SolverType>
     void compute_S(SolverType& solver) const {
@@ -159,18 +159,18 @@ class XNystrace{
         Y += nu * O;
         Eigen::HouseholderQR<MatrixType> qr(Y);
         MatrixType Q = qr.householderQ() * MatrixType::Identity(n_, r_);
-        MatrixType R = qr.matrixQR().topRows(r_).triangularView<Eigen::Upper>();
+        MatrixType R = qr.matrixQR().topRows(r_).template triangularView<Eigen::Upper>();
         MatrixType H = O.transpose() * Y;
         H = 0.5 * (H + H.transpose());
         Eigen::LLT<MatrixType> llt(H);
         MatrixType C = llt.matrixL().transpose(); 
-        MatrixType Cinv = C.triangularView<Eigen::Upper>().solve(MatrixType::Identity(r_, r_));
+        MatrixType Cinv = C.template triangularView<Eigen::Upper>().solve(MatrixType::Identity(r_, r_));
         MatrixType B = R * Cinv;
         Eigen::HouseholderQR<MatrixType> qrO(O);
         MatrixType QQ = qrO.householderQ() * MatrixType::Identity(n_, r_);
-        MatrixType RR = qrO.matrixQR().topRows(r_).triangularView<Eigen::Upper>();
+        MatrixType RR = qrO.matrixQR().topRows(r_).template triangularView<Eigen::Upper>();
         MatrixType WW = QQ.transpose() * O;
-        MatrixType RRinvT = RR.triangularView<Eigen::Upper>().solve(MatrixType::Identity(r_, r_)).transpose();
+        MatrixType RRinvT = RR.template triangularView<Eigen::Upper>().solve(MatrixType::Identity(r_, r_)).transpose();
         
         MatrixType SS = RRinvT;
         for(int i = 0; i < r_; ++i) { SS.col(i).normalize(); }
@@ -220,19 +220,19 @@ class XNystrace{
         Y += nu * O;
         Eigen::HouseholderQR<MatrixType> qr(Y);
         MatrixType Q = qr.householderQ() * MatrixType::Identity(n_, r_);
-        MatrixType R = qr.matrixQR().topRows(r_).triangularView<Eigen::Upper>();
+        MatrixType R = qr.matrixQR().topRows(r_).template triangularView<Eigen::Upper>();
 
         MatrixType H = O.transpose() * Y;
         H = 0.5 * (H + H.transpose());
         Eigen::LLT<MatrixType> llt(H);
         MatrixType C = llt.matrixL().transpose();
-        MatrixType Cinv = C.triangularView<Eigen::Upper>().solve(MatrixType::Identity(r_, r_));
+        MatrixType Cinv = C.template triangularView<Eigen::Upper>().solve(MatrixType::Identity(r_, r_));
         MatrixType B = R * Cinv;
         Eigen::HouseholderQR<MatrixType> qrO(O);
         MatrixType QQ = qrO.householderQ() * MatrixType::Identity(n_, r_);
-        MatrixType RR = qrO.matrixQR().topRows(r_).triangularView<Eigen::Upper>();
+        MatrixType RR = qrO.matrixQR().topRows(r_).template triangularView<Eigen::Upper>();
         MatrixType WW = QQ.transpose() * O;
-        MatrixType RRinvT = RR.triangularView<Eigen::Upper>().solve(MatrixType::Identity(r_, r_)).transpose();
+        MatrixType RRinvT = RR.template triangularView<Eigen::Upper>().solve(MatrixType::Identity(r_, r_)).transpose();
         MatrixType SS = RRinvT;
         for(int i = 0; i < r_; ++i) {
             SS.col(i).normalize();
