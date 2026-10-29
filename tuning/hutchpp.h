@@ -48,7 +48,6 @@ class Hutchpp {
         // Defining m as the closest multiple of 3 smaller than r
         int m = (r_ / 3) * 3; 
         int p = m / 3;
-        fdapde_assert(p > 0 && "Hutch++ requires r >= 3");
         //H, G creation and population with rademacher (H corresponds to matrix S in the Hutch++ paper)
         if (!H_.has_value() || H_->rows() != n || H_->cols() != p) {
             std::mt19937 rng(seed_);
