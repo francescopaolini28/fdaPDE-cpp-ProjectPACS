@@ -31,7 +31,7 @@ namespace internals {
 using matrix_t = Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic>;
 using vector_t = Eigen::Matrix<double, Eigen::Dynamic, 1>;
 
-// Contract definition. A vector is just an (n x 1) matrix, so apply() always returns a matrix_t
+// Contract definition.
 template <typename T>
 concept LinearOperator = requires(const T& op, const vector_t& v, const matrix_t& M) {
     { op.rows() } -> std::convertible_to<Eigen::Index>;
