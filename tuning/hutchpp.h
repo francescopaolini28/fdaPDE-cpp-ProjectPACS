@@ -19,7 +19,10 @@
 
 #include <random>
 #include <Eigen/Dense>
+#include <optional>
+#include "linear_operator.h"
 #include "./fdaPDE/src/models/header_check.h"
+
 
 namespace fdapde {
 namespace internals {
@@ -27,96 +30,69 @@ namespace internals {
 // Stochastic trace estimation by Hutch++ method, as described in:
 // Raphael A. Meyer, Cameron Musco, Christopher Musco, David P. Woodruff (2020) Hutch++: Optimal Stochastic Trace Estimation
 
-template <typename MatrixType>
+template <LinearOperator Op>
+
 class Hutchpp {
     
     public:
 
-    Hutchpp() noexcept = default;
-    Hutchpp(int n, int r = 100, int seed = random_seed) noexcept : n_(n), r_(r), seed_(seed == random_seed ? std::random_device()() : seed) {    }
+    using matrix_t = Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic>;
 
-    template <typename SolverType>
-    void compute_S(SolverType& solver) const {
-        // fdapde_assert(solver.lambda_saved_.has_value());  (da mettere in fe_ls_elliptic)
-        std::mt19937 rng(seed_);
-        rademacher_distribution rademacher;
+    Hutchpp() noexcept = default;
+    Hutchpp(const Op& A, int r = 100, int seed = random_seed) : r_(r), seed_(seed == random_seed ? std::random_device()() : seed) { compute(A); }
+    Hutchpp(int r, int seed = random_seed) noexcept : r_(r), seed_(seed == random_seed ? std::random_device()() : seed) { }
+
+    
+    void compute(const Op& A) const {
+        const int n = A.rows();
         // Defining m as the closest multiple of 3 smaller than r
         int m = (r_ / 3) * 3; 
         int p = m / 3;
+        fdapde_assert(p > 0 && "Hutch++ requires r >= 3");
         //H, G creation and population with rademacher (H corresponds to matrix S in the Hutch++ paper)
-        MatrixType H(n_, p);
-        MatrixType G(n_, p);
-        for (int i = 0; i < n_; ++i) {
-            for (int j = 0; j < p; ++j) { 
-                H(i, j) = rademacher(rng);
-                G(i, j) = rademacher(rng);
+        if (!H_.has_value() || H_->rows() != n || H_->cols() != p) {
+            std::mt19937 rng(seed_);
+            rademacher_distribution rademacher;
+            H_ = matrix_t(n, p);
+            G_ = matrix_t(n, p);
+            for (int i = 0; i < n; ++i) {
+                for (int j = 0; j < p; ++j) { 
+                    (*H_)(i, j) = rademacher(rng);
+                    (*G_)(i, j) = rademacher(rng);
+                }
             }
         }
-        MatrixType SH = solver.apply_S(H);
-        Eigen::ColPivHouseholderQR<MatrixType> qr(SH);
-        MatrixType Q = qr.householderQ() * MatrixType::Identity(n_, p); //I retain only the first p (m/3) columns of Q
-        MatrixType SQ = solver.apply_S(Q);
+
+        matrix_t SH = A.apply(*H_);
+        Eigen::ColPivHouseholderQR<matrix_t> qr(SH);
+        matrix_t Q = qr.householderQ() * matrix_t::Identity(n, p); //I retain only the first p (m/3) columns of Q
+        matrix_t SQ = A.apply(Q);
         // Tr(Q'SQ) element-wise(Hadamard) product
         double tr_QSQ = (Q.cwiseProduct(SQ)).sum();
         // (I - QQ')G
-        MatrixType G_p = G - Q * (Q.transpose() * G);
-        MatrixType SG_p = solver.apply_S(G_p);
+        matrix_t G_p = *G_ - Q * (Q.transpose() * *G_);
+        matrix_t SG_p = A.apply(G_p);
         // Tr(G_p'SG_p)
         double tr_GpSGp = (G_p.cwiseProduct(SG_p)).sum();
-        Strace_est_ = tr_QSQ + (tr_GpSGp / p);
+        trace_est_ = tr_QSQ + (tr_GpSGp / p);
         return;
     }
 
-    template <typename SolverType>
-    void compute_SS(SolverType& solver) const {
-            
-        // fdapde_assert(solver.lambda_saved_.has_value());  (da mettere in fe_ls_elliptic)
-        std::mt19937 rng(seed_);
-        rademacher_distribution rademacher;
-        // Defining m as the closest multiple of 3 smaller than r
-        int m = (r_ / 3) * 3; 
-        int p = m / 3;
-        //H, G creation and population with rademacher (H corresponds to matrix S in the Hutch++ paper)
-        MatrixType H(n_, p);
-        MatrixType G(n_, p);
-        for (int i = 0; i < n_; ++i) {
-            for (int j = 0; j < p; ++j) { 
-                H(i, j) = rademacher(rng);
-                G(i, j) = rademacher(rng);
-            }
-        }
-        // S'SH
-        MatrixType SSH = solver.apply_St(solver.apply_S(H)); //n_locs x p matrix, In the paper SSH = AS
-        Eigen::ColPivHouseholderQR<MatrixType> qr(SSH);
-        MatrixType Q = qr.householderQ() * MatrixType::Identity(n_, p); //I retain only the first p (m/3) columns of Q
-        // tr(Q'SSQ)
-        MatrixType SQ = solver.apply_S(Q);
-        // always Frobenius norm on S'S
-        double tr_QSSQ = SQ.squaredNorm();
-        // (I - QQ')G 
-        MatrixType G_p = G - Q * (Q.transpose() * G);
-        MatrixType SG_p = solver.apply_St(G_p);
-        double tr_GpSSGp = SG_p.squaredNorm();
-        SStrace_est_ =  tr_QSSQ + (tr_GpSSGp / p); 
-        return;
-    }
 
-    // observers
-    double S_trace() const { return Strace_est_; }
-    double SS_trace() const { return SStrace_est_; }
+    // observer
+    double trace() const { return trace_est_; }
 
     private:
-    int r_ = 100;
-    int seed_ = 0;
-    int n_ = 0; //matrix dimension 
-
-    mutable double Strace_est_ = 0.0;
-    mutable double SStrace_est_ = 0.0;
-
+    int r_ = 100, seed_ = 0;
+    mutable std::optional<matrix_t> H_, G_;
+    mutable double trace_est_ = 0.0;
 
 };
 
 
+template <LinearOperator Op> Hutchpp(const Op&) -> Hutchpp<Op>;
+template <LinearOperator Op> Hutchpp(const Op&, int) -> Hutchpp<Op>;
+template <LinearOperator Op> Hutchpp(const Op&, int, int) -> Hutchpp<Op>;
 
 } // namespace internals
 } // namespace fdapde

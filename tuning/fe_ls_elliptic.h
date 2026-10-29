@@ -106,8 +106,20 @@ struct fe_ls_elliptic {
     public:
 
 
+    class SmoothingOp {
+        const fe_ls_elliptic* solver_;
+    public:
+        explicit SmoothingOp(const fe_ls_elliptic* solver) : solver_(solver) { }
+        int rows() const { return solver_ -> n_locs_; }
+        int cols() const { return solver_ -> n_locs_; }
+        int size() const { return rows() * cols(); }
+        matrix_t apply(const matrix_t& x) const{ return solver_ ->apply_S(x); }
+        matrix_t apply_transpose(const matrix_t& x) const{ return solver_ -> apply_St(x); }
+    };
+
+
     //apply S*M
-    matrix_t apply_S(const matrix_t& M) {
+    matrix_t apply_S(const matrix_t& M) const{
 
         int cols = M.cols();
         matrix_t Bs_local = matrix_t::Zero(2 * n_dofs_, cols);
@@ -138,7 +150,7 @@ struct fe_ls_elliptic {
     };
 
     // S'*M
-    matrix_t apply_St(const matrix_t& M) {
+    matrix_t apply_St(const matrix_t& M) const{
 
         int cols = M.cols();
         matrix_t Bs_local = matrix_t::Zero(2 * n_dofs_, cols);
@@ -625,8 +637,7 @@ struct fe_ls_elliptic {
             invA_.compute(A);
             lambda_saved_ = lambda_;
         }
-        Hutch<matrix_t> estimator(n_locs_, r, seed);
-        return edf(estimator);
+        return edf(r, seed);
     }
     // penalty matrix: \lambda * R1^\top * (R0)^{-1} * R1
     matrix_t P(double lambda) const {
@@ -1094,16 +1105,19 @@ struct fe_ls_elliptic {
 
     */
 
-    template <typename TraceEstimator = Hutch<matrix_t>>
-    double edf(const TraceEstimator& estimator = TraceEstimator()) {
-        estimator.compute_S(*this);
-        return estimator.S_trace();
+    double edf(int r = 100, int seed = random_seed) const {
+        SmoothingOp S{this};
+        Hutch<SmoothingOp> est(r, seed);
+        est.compute(S);
+        return est.trace();
     }
 
-    template <typename TraceEstimator = Hutch<matrix_t>>
-    double edf_SS(const TraceEstimator& estimator = TraceEstimator()) {
-        estimator.compute_SS(*this);
-        return estimator.SS_trace();
+    double edf_SS(int r = 100, int seed = random_seed) const {
+        SmoothingOp S{this};
+        auto op = internals::transpose(S) * S;
+        Hutch<decltype(op)> est(r, seed);
+        est.compute(op);
+        return est.trace();
     }
 
    protected:
