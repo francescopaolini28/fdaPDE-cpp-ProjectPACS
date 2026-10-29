@@ -102,9 +102,7 @@ int main() {
         check_mat(op, A.transpose() * A * X, X, "A^T*A");
     }
 
-    std::cout << "\n=== Caso d'uso reale ===\n";
     {
-        // S = A (per test); S^T S = A^T A
         auto S = make_dense_op(A);
         auto SqS = transpose(S) * S;
         check_vec(SqS, A.transpose() * A * x, x, "transpose(S)*S");
