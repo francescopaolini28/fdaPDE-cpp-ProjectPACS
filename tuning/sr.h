@@ -556,6 +556,68 @@ class SRPDE {
     pse_t pse(const typename pse_t::edf_cache_t& edf_cache, int r, int seed) { return pse_t(this, edf_cache, r, seed); }
     pse_t pse(const typename pse_t::edf_cache_t& edf_cache, const typename pse_t::edf_cache_t& edf_SS_cache, int r, int seed) { return pse_t(this, edf_cache, edf_SS_cache, r, seed); }
 
+
+     struct cv_t : public ScalarFieldBase<n_lambda, cv_t> {
+        using Base = ScalarFieldBase<1, cv_t>;
+        static constexpr int StaticInputSize = n_lambda;
+        static constexpr int NestAsRef = 0;
+        static constexpr int XprBits = 0;
+        using Scalar = double;
+        using InputType = Vector<Scalar, StaticInputSize>;
+
+
+        void k_fold_split () {
+
+            folds_.clear(); // cleaning the folds matrix
+            folds_.reserve(k_); // memory allocation
+            std::vector<int> indices(n_); 
+            std::iota(indices.begin(), indices.end(), 0); // populating the vector with indices from 0 to (n-1)
+            std::mt19937 rng(seed_);
+            std::shuffle(indices.begin(), indices.end(), rng); // shuffling the indeces
+            int base_split_obs = n_/k_;
+            int remainder = n_ % k_;
+
+            int current_offset = 0;
+            for (int i = 0; i < k_; i++) {
+                int current_fold_size = base_split_obs + (i < remainder ? 1 : 0); // The  first folds will have an element more 
+                folds_.emplace_back(indices.begin() + current_offset, indices.begin() + current_fold_size + current_offset);
+                current_offset += current_fold_size;
+            }
+        }
+
+
+        template <typename InputType_>
+            requires(internals::is_subscriptable<InputType_, int>)
+        double operator()(const InputType_& lambda) {
+            return internals::apply_index_pack<n_lambda>([&]<int... Ns_>() { return operator()(lambda[Ns_]...); });
+        }
+        template <typename... LambdaT>
+            requires(std::is_convertible_v<LambdaT, double> && ...) && (sizeof...(LambdaT) == StaticInputSize)
+        double operator()(LambdaT... lambda) {
+            
+
+        }
+
+
+
+
+        
+        private:
+
+        int k_, seed_, n_;
+        std::vector<std::vector<int>> folds_;
+        std::vector<Scalar> lambdas_;
+        std::vector<Scalar> losses_;
+
+
+
+
+     };
+       
+
+
+
+
     // inference
     class wald_t {
         using matrix_t = Eigen::Matrix<double, Dynamic, Dynamic>;
