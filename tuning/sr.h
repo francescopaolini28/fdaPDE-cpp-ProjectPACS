@@ -544,7 +544,7 @@ class SRPDE {
         edf_cache_t edf_SS_cache_;
         // stochastic edf approximation parameter
         int r_, seed_;      
-        std::vector<double> lambda_grid_;
+        vector_t lambda_grid_;
         std::optional<double> sigma2_hat_ = std::nullopt;
     };
     
@@ -585,7 +585,15 @@ class SRPDE {
             }
         }
 
+        double mse (const vector_t &x, const vector_t &y) const {
+            Scalar ss = 0.0;
+            for (int i = 0; i < x.size(); i ++) {
+                ss += std::pow((x[i] - y[i]), 2);
+            }
+            return std::sqrt(ss);
+        } 
 
+        
         template <typename InputType_>
             requires(internals::is_subscriptable<InputType_, int>)
         double operator()(const InputType_& lambda) {
@@ -595,24 +603,31 @@ class SRPDE {
             requires(std::is_convertible_v<LambdaT, double> && ...) && (sizeof...(LambdaT) == StaticInputSize)
         double operator()(LambdaT... lambda) {
             
+            for (int i = 0; i < k_; i++) {
+
+                
+
+
+
+            }
 
         }
 
 
-
-
-        
         private:
 
+        SRPDE* model_;
         int k_, seed_, n_;
         std::vector<std::vector<int>> folds_;
-        std::vector<Scalar> lambdas_;
-        std::vector<Scalar> losses_;
-
-
-
+        vector_t lambdas_;
+        vector_t losses_;
 
      };
+
+     
+
+
+
        
 
 
