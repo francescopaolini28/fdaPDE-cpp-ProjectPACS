@@ -557,7 +557,7 @@ class SRPDE {
     pse_t pse(const typename pse_t::edf_cache_t& edf_cache, const typename pse_t::edf_cache_t& edf_SS_cache, int r, int seed) { return pse_t(this, edf_cache, edf_SS_cache, r, seed); }
 
 
-     struct cv_t : public ScalarFieldBase<n_lambda, cv_t> {
+    struct cv_t : public ScalarFieldBase<n_lambda, cv_t> {
         using Base = ScalarFieldBase<1, cv_t>;
         static constexpr int StaticInputSize = n_lambda;
         static constexpr int NestAsRef = 0;
@@ -590,10 +590,19 @@ class SRPDE {
             for (int i = 0; i < x.size(); i ++) {
                 ss += std::pow((x[i] - y[i]), 2);
             }
-            return std::sqrt(ss);
+            return ss / x.size();
         } 
 
-        
+
+        //Constructors
+        cv_t() noexcept = default;
+
+        cv_t(SRPDE* model, int k = 5, int seed = random_seed) : model_(model), k_(k), seed_(seed == random_seed ? std::random_device()() : seed), n_(model->n_obs()) {
+            fdapde_assert(k > 0 && k <= n_);
+            k_fold_split(); 
+        }
+
+
         template <typename InputType_>
             requires(internals::is_subscriptable<InputType_, int>)
         double operator()(const InputType_& lambda) {
@@ -612,15 +621,12 @@ class SRPDE {
             }
 
         }
-
-
+        
         private:
 
         SRPDE* model_;
         int k_, seed_, n_;
         std::vector<std::vector<int>> folds_;
-        vector_t lambdas_;
-        vector_t losses_;
 
      };
 
