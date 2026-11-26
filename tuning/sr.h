@@ -628,15 +628,59 @@ class SRPDE {
         int k_, seed_, n_;
         std::vector<std::vector<int>> folds_;
 
-     };
+    };
 
-     
+    struct fs_REML {
+        std::pair<double, double> compute_fs_REML(double lambda0, SRPDE& model, int r, int seed, 
+            double tol, int max_it, double lambda_max) const{                            
+            
+            Eigen::VectorXd z = model.response();  // z
+            double lambda = lambda0;
 
+            for (int i = 0; i < max_it; ++i) {
+
+                model.fit(lambda);
+
+                Eigen::VectorXd zhat = model.fitted();                          //ẑ = Wβ̂ + Ψf̂ 
+                double rss = (zhat - z).squaredNorm();                          // ‖fitted − z‖²
+                Eigen::VectorXd fn = zhat;                                          //f̂n = ẑ                 
+                if (model.n_covs() > 0) fn -= model.design_matrix() * model.beta(); // f̂n = Ψf̂ (no covariates)
+                double ftPf = fn.dot(z - zhat) / lambda;                          // f̂ᵀPf̂
+                
+                double edf = model.edf(r, seed);                               // trS
+                double dor = model.n_obs() - model.n_covs() - edf;            // dor = n − q − trS
+                if (dor <= 0.0) { lambda *= 10.0; continue; }                 
+                double sigma2_hat = rss / dor;                                // σ̂² = rss / dor
+
+                if (!(ftPf > 0.0) || edf - 1.0 <= 0.0) {    // numero non valido
+                    lambda = lambda_max;
+                    break;
+                }
+                double lambda_new = std::min(sigma2_hat * (edf - 1.0) / ftPf, lambda_max);
+
+                if (std::abs(std::log(lambda_new) - std::log(lambda)) < tol) {
+                    lambda = lambda_new;
+                    break;
+                }
+                
+                lambda = lambda_new;
+
+            }
+
+            model.fit(lambda);     // fitto col lambda finale
+            double rss = (model.fitted() - z).squaredNorm();               // ‖fitted − z‖²
+            double edf = model.edf(r, seed);                               // trS
+            double dor = model.n_obs() - model.n_covs() - edf;
+            double sigma2_hat = rss / dor;                                // σ̂² = rss / dor
+            return std::make_pair(lambda, sigma2_hat);
+            
+        }
+    };
+
+    fs_REML fs_reml() { return fs_REML{}; }
 
 
        
-
-
 
 
     // inference
